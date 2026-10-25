@@ -1,0 +1,9 @@
+/build/
+*.uf2
+*.elf
+*.bin
+*.lbg
+*.dis
+*.map
+.DS_Store
+tokengithub.txt

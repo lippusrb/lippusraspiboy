@@ -1,0 +1,36 @@
+#!/bin/zsh
+set -e
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+list_games() {
+    local src
+    for src in "$ROOT"/games/*/main.c; do
+        basename "$(dirname "$src")"
+    done
+}
+
+if [[ $# -lt 1 || "$1" == "-h" || "$1" == "--help" ]]; then
+    echo "uso: ./play <gioco>"
+    echo
+    echo "giochi:"
+    list_games | sed 's/^/  /'
+    echo
+    echo "frecce     joystick"
+    echo "A S D F    pulsanti A B X Y"
+    echo "1          Select"
+    echo "2          Start"
+    echo "spazio     click dello stick"
+    echo "1+2        torna al menu, qui chiude la finestra"
+    exit 1
+fi
+
+GAME="$1"
+if [[ ! -f "$ROOT/games/$GAME/main.c" ]]; then
+    echo "non trovo il gioco '$GAME'"
+    echo "giochi:"
+    list_games | sed 's/^/  /'
+    exit 1
+fi
+
+make -C "$ROOT/host" GAME="$GAME"
+exec "$ROOT/build/host/$GAME" "$GAME"
