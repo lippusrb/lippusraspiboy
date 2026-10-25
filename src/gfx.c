@@ -30,6 +30,7 @@ static volatile int frame_w;
 static volatile int frame_h;
 
 static void present_core(void);
+static void hold_lcd_reset(void);
 
 /* Il disegno aspetta la fine dell'invio: un solo framebuffer. */
 static void fb_wait(void) {
@@ -93,11 +94,11 @@ static void lcd_init_panel(void) {
     static const uint8_t zero[] = {0x00};
     static const uint8_t gamma_on[] = {0x01};
 
-    gpio_put(LIPPUS_PIN_LCD_RST, 1);
+    hold_lcd_reset();
     sleep_ms(5);
     gpio_put(LIPPUS_PIN_LCD_RST, 0);
     sleep_ms(20);
-    gpio_put(LIPPUS_PIN_LCD_RST, 1);
+    hold_lcd_reset();
     sleep_ms(120);
 
     lcd_cmd(0x01);
@@ -124,9 +125,8 @@ static void lcd_init_panel(void) {
     panel_ready = 1;
 }
 
-/* 12 mA e fronti rapidi servono a 62.5 MHz sulle piste corte. Sulla
-   breadboard quegli stessi fronti si accoppiano sul reset del pannello:
-   il primo quadro si vede, poi il controllore si azzera e resta bianco. */
+/* 12 mA e fronti rapidi servono a 62.5 MHz: a 8 mA il clock arriva sporco
+   e il pannello si perde. Sotto i 40 MHz bastano 4 mA e fronti lenti. */
 static void drive_lcd(uint pin) {
     if (LIPPUS_LCD_BAUD >= 40000000u) {
         gpio_set_drive_strength(pin, GPIO_DRIVE_STRENGTH_12MA);
@@ -135,6 +135,13 @@ static void drive_lcd(uint pin) {
         gpio_set_drive_strength(pin, GPIO_DRIVE_STRENGTH_4MA);
         gpio_set_slew_rate(pin, GPIO_SLEW_RATE_SLOW);
     }
+}
+
+/* Il reset va tenuto alto con forza, cosi' un fronte dello SPI non lo fa scattare. */
+static void hold_lcd_reset(void) {
+    gpio_set_drive_strength(LIPPUS_PIN_LCD_RST, GPIO_DRIVE_STRENGTH_12MA);
+    gpio_set_slew_rate(LIPPUS_PIN_LCD_RST, GPIO_SLEW_RATE_SLOW);
+    gpio_put(LIPPUS_PIN_LCD_RST, 1);
 }
 
 void gfx_init(void) {
@@ -146,7 +153,7 @@ void gfx_init(void) {
     gpio_set_dir(LIPPUS_PIN_LCD_DC, GPIO_OUT);
     gpio_init(LIPPUS_PIN_LCD_RST);
     gpio_set_dir(LIPPUS_PIN_LCD_RST, GPIO_OUT);
-    gpio_put(LIPPUS_PIN_LCD_RST, 1);
+    hold_lcd_reset();
 
     spi_init(spi0, LIPPUS_LCD_BAUD);
     gpio_set_function(LIPPUS_PIN_LCD_SCK, GPIO_FUNC_SPI);
@@ -528,7 +535,9 @@ void lippus_gfx_orientation(unsigned mode) {
     if (!panel_ready) {
         return;
     }
-    lcd_write(0x36, &panel_madctl, 1);
+    /* Init intera, non solo il MADCTL: se il pannello si era azzerato
+       (schermo bianco) SELECT lo riporta in vita senza spegnere la console. */
+    lcd_init_panel();
     lippus_gfx_clear(LIPPUS_BLACK);
     lippus_gfx_present();
 }

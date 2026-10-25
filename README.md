@@ -21,7 +21,7 @@ Tenere premuto **SELECT** durante l'accensione apre il menu anche se sulla sched
 | MicroSD: SCK, MOSI, MISO, CS | GP10, GP11, GP12, GP13 |
 | Audio PWM | GP20 |
 
-I pulsanti chiudono verso massa. Il display è in sola scrittura, landscape 320×240. Se l'immagine esce specchiata, cambia `LIPPUS_LCD_MADCTL` in `src/board.h` (`0x28`, `0xE8`, `0x48`, `0x88`). Se i pixel tremano sul cablaggio di prova, abbassa `LIPPUS_LCD_BAUD` da 62500000 a 31250000.
+I pulsanti chiudono verso massa. Il display è in sola scrittura, landscape 320×240. Se l'immagine esce specchiata, cambia `LIPPUS_LCD_MADCTL` in `src/board.h` (`0x28`, `0xE8`, `0x48`, `0x88`). `LIPPUS_LCD_BAUD` è 62500000 e i piedini del display escono a 12 mA: a quella velocità una corrente più bassa sporca il clock e il pannello perde l'immagine. Se sulla breadboard il menu sfarfalla, scendi a 31250000.
 
 ## Compilare e flashare
 
