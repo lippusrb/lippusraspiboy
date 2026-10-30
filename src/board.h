@@ -28,9 +28,8 @@
 #define LIPPUS_PIN_START 21
 #define LIPPUS_PIN_SELECT 22
 
-/* 62.5 MHz, piedini a 12 mA. E' la combinazione stabile di ieri sera:
-   a 8 mA il clock non regge e l'immagine si rompe. Se sulla breadboard
-   il menu sfarfalla, scendi a 31250000: i giochi diventano lenti. */
+/* 62.5 MHz e' il massimo utile del SPI del RP2040. Se l'immagine trema
+   sulla breadboard, abbassa questo valore a 31250000 o 15625000. */
 #define LIPPUS_LCD_BAUD 62500000u
 #define LIPPUS_SD_BAUD_INIT 400000u
 #define LIPPUS_SD_BAUD_RUN 12500000u

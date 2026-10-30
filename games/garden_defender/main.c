@@ -1,19 +1,19 @@
 #include "lippus.h"
+#include "sprites.h"
 
 /* Orizzontale: il giardiniere scorre sulla base, lo stick non si gira.
-   Sciame a griglia, vasi che si sgretolano, farfalla in alto.
-   Disegni e suoni sono geometrie nostre, non sprite copiati. */
+   Sciame a griglia, vasi pixel-art che si sgretolano, farfalla in alto. */
 
 #define BUG_COLS 8
 #define BUG_ROWS 5
 #define BUG_N (BUG_COLS * BUG_ROWS)
-#define PITCH_X 26
-#define PITCH_Y 15
+#define PITCH_X 28
+#define PITCH_Y 18
 
 #define POTS 3
-#define POT_W 28
-#define POT_H 16
-#define POT_Y 176
+#define POT_W POT_SPR_W
+#define POT_H POT_SPR_H
+#define POT_Y 168
 #define PLAYER_Y 206
 
 #define DROPS 3
@@ -112,24 +112,11 @@ static int chip_rect(int x, int y, int w, int h) {
 }
 
 static void stamp_pots(void) {
-    for (int y = 0; y < POT_H; y++) {
-        int half;
-        if (y < 3) {
-            half = 12;
-        } else {
-            half = 11 - (y - 3) / 2;
-            if (half < 6) {
-                half = 6;
-            }
-        }
-        int mid = POT_W / 2;
-        for (int x = 0; x < POT_W; x++) {
-            int on = x >= mid - half && x <= mid + half;
-            if (y == 3 && x > mid - 8 && x < mid + 8) {
-                on = 0;
-            }
-            for (int p = 0; p < POTS; p++) {
-                g_pot[p][y][x] = (uint8_t)on;
+    for (int p = 0; p < POTS; p++) {
+        const uint16_t *spr = k_vasi[p];
+        for (int y = 0; y < POT_H; y++) {
+            for (int x = 0; x < POT_W; x++) {
+                g_pot[p][y][x] = (uint8_t)(spr[y * POT_W + x] != LIPPUS_COLOR_KEY);
             }
         }
     }
@@ -139,14 +126,11 @@ static void bug_box(int row, int col, int *x, int *y, int *w, int *h) {
     *x = g_form_x + col * PITCH_X;
     *y = g_form_y + row * PITCH_Y;
     if (row == 0) {
-        *w = 6;
-        *h = 6;
-    } else if (row < 3) {
-        *w = 8;
-        *h = 8;
+        *w = BUG8_W;
+        *h = BUG8_H;
     } else {
-        *w = 10;
-        *h = 8;
+        *w = BUG16_W;
+        *h = BUG16_H;
     }
     *x += (PITCH_X - *w) / 2;
 }
@@ -376,7 +360,8 @@ static void update_play(const lippus_pad_t *pad) {
         g_shot_y -= 4;
         if (g_shot_y < 12) {
             g_shot_on = 0;
-        } else if (g_fly_on && overlap(g_shot_x, g_shot_y, 2, 8, g_fly_x, 16, 14, 8)) {
+        } else if (g_fly_on &&
+                   overlap(g_shot_x, g_shot_y, 2, 8, g_fly_x, 16, BUG16_W, BUG16_H)) {
             g_shot_on = 0;
             g_fly_on = 0;
             g_score += 200;
@@ -473,53 +458,40 @@ static void update_play(const lippus_pad_t *pad) {
     }
 }
 
+static void blit_key(int x, int y, int w, int h, const uint16_t *pixels) {
+    gfx_blit(x, y, w, h, pixels, 1, LIPPUS_COLOR_KEY);
+}
+
 static void draw_aphid(int x, int y) {
-    gfx_fill_rect(x, y + 1, 6, 4, LIPPUS_RGB(70, 170, 60));
-    gfx_fill_rect(x + 1, y, 1, 1, LIPPUS_BLACK);
-    gfx_fill_rect(x + 4, y, 1, 1, LIPPUS_BLACK);
+    blit_key(x, y, BUG8_W, BUG8_H, k_afide);
 }
 
 static void draw_mosquito(int x, int y) {
-    int flap = g_anim ? 1 : -1;
-    gfx_fill_rect(x, y + 2 + flap, 3, 2, LIPPUS_RGB(180, 200, 210));
-    gfx_fill_rect(x + 5, y + 2 - flap, 3, 2, LIPPUS_RGB(180, 200, 210));
-    gfx_fill_rect(x + 3, y + 1, 2, 6, LIPPUS_RGB(60, 60, 70));
-    gfx_fill_rect(x + 3, y, 2, 2, LIPPUS_RGB(40, 40, 48));
+    blit_key(x, y, BUG16_W, BUG16_H, k_zanzara);
 }
 
 static void draw_locust(int x, int y) {
-    int flap = g_anim ? 0 : 2;
-    gfx_fill_rect(x + 1, y + flap, 7, 2, LIPPUS_RGB(150, 170, 70));
-    gfx_fill_rect(x, y + 3, 10, 3, LIPPUS_RGB(110, 130, 40));
-    gfx_fill_rect(x + 8, y + 2, 2, 2, LIPPUS_RGB(70, 80, 30));
-    gfx_fill_rect(x + 1, y + 6, 2, 2, LIPPUS_RGB(70, 80, 30));
+    blit_key(x, y, BUG16_W, BUG16_H, k_cavalletta);
 }
 
 static void draw_butterfly(int x, int y) {
-    int wing = (g_frame & 4) ? 3 : 5;
-    gfx_fill_rect(x, y + 2, wing, 4, LIPPUS_AMBER);
-    gfx_fill_rect(x + 14 - wing, y + 2, wing, 4, LIPPUS_YELLOW);
-    gfx_fill_rect(x + 6, y + 1, 2, 6, LIPPUS_RGB(120, 70, 20));
+    blit_key(x, y, BUG16_W, BUG16_H, k_farfalla);
 }
 
 static void draw_pots(void) {
-    const uint16_t clay = LIPPUS_RGB(186, 96, 52);
-    const uint16_t rim = LIPPUS_RGB(130, 62, 36);
     for (int p = 0; p < POTS; p++) {
         int ox = pot_x(p);
+        const uint16_t *spr = k_vasi[p];
         for (int y = 0; y < POT_H; y++) {
-            int x = 0;
-            uint16_t color = y < 3 ? rim : clay;
-            while (x < POT_W) {
+            for (int x = 0; x < POT_W; x++) {
                 if (!g_pot[p][y][x]) {
-                    x++;
                     continue;
                 }
-                int x0 = x;
-                while (x < POT_W && g_pot[p][y][x]) {
-                    x++;
+                uint16_t c = spr[y * POT_W + x];
+                if (c == LIPPUS_COLOR_KEY) {
+                    continue;
                 }
-                gfx_fill_rect(ox + x0, POT_Y + y, x - x0, 1, color);
+                gfx_pixel(ox + x, POT_Y + y, c);
             }
         }
     }

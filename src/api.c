@@ -1,5 +1,7 @@
 #include "os.h"
 
+#include "fat.h"
+
 #include "pico/stdlib.h"
 
 #include <setjmp.h>
@@ -33,6 +35,8 @@ static lippus_api_t s_api = {
     .exit_to_menu = lippus_exit,
     .sound = lippus_sound,
     .tune = lippus_tune,
+    .record_read = lippus_record_read,
+    .record_write = lippus_record_write,
 };
 
 const lippus_api_t *lippus_api_table(void) { return &s_api; }
@@ -43,6 +47,14 @@ void lippus_api_set_size(uint16_t width, uint16_t height) {
 }
 
 uint32_t lippus_ticks(void) { return (uint32_t)(time_us_64() / 1000u); }
+
+int lippus_record_read(const char *name, void *dst, uint32_t cap) {
+    return fat_record_read(name, dst, cap);
+}
+
+int lippus_record_write(const char *name, const void *src, uint32_t len) {
+    return fat_record_write(name, src, len);
+}
 
 void lippus_sleep(uint32_t ms) {
     while (ms) {

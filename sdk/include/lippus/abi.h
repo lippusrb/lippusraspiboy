@@ -56,7 +56,14 @@ typedef struct lippus_api {
     void (*sound)(uint8_t voice, uint8_t wave, uint16_t hz, uint8_t volume, uint16_t ms);
     void (*tune)(uint8_t voice, uint8_t wave, uint8_t volume, const lippus_note_t *notes,
                  uint16_t count);
+    /* File /record/<nome> sulla SD. nome: 1-8 caratteri, lettere cifre e '_'.
+       read: byte copiati, 0 se manca, -1 se errore. write: 0 ok, -1 errore.
+       Al massimo LIPPUS_RECORD_MAX byte. La cartella si crea da sola. */
+    int (*record_read)(const char *name, void *dst, uint32_t cap);
+    int (*record_write)(const char *name, const void *src, uint32_t len);
 } lippus_api_t;
+
+#define LIPPUS_RECORD_MAX 512u
 
 /* Puntatore riempito dallo startup del gioco. Il firmware non lo definisce. */
 extern const lippus_api_t *g_lippus_api;

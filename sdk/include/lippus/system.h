@@ -22,3 +22,26 @@ void sys_alloc_reset(void);
 
 /* Chiamala a fine frame. Dorme quel che serve per restare su frame_ms. */
 void sys_frame(uint32_t frame_ms);
+
+/* Classifiche sulla SD, uguali per ogni gioco.
+   Il firmware tiene i file in /record/ nella root della scheda, un file
+   per gioco. Il nome e' quello passato qui (fino a 8 caratteri: lettere,
+   cifre, '_'), salvato in maiuscolo, per esempio "MAZEMOUS".
+   Copiare la cartella record su un'altra SD porta dietro le classifiche.
+   Il contenuto del file lo sceglie il gioco. Lettura: byte copiati in dst,
+   0 se il file non c'e' ancora, -1 se la scheda fallisce. Scrittura: 0 se
+   va a buon fine, -1 altrimenti. Non si scrivono piu' di LIPPUS_RECORD_MAX
+   byte. Sul Mac, ./play usa la cartella record/ nella directory corrente. */
+static inline int sys_record_read(const char *name, void *dst, int cap) {
+    if (!lippus_api()->record_read || cap < 0) {
+        return -1;
+    }
+    return lippus_api()->record_read(name, dst, (uint32_t)cap);
+}
+
+static inline int sys_record_write(const char *name, const void *src, int len) {
+    if (!lippus_api()->record_write || len < 0 || (uint32_t)len > LIPPUS_RECORD_MAX) {
+        return -1;
+    }
+    return lippus_api()->record_write(name, src, (uint32_t)len);
+}

@@ -6,7 +6,7 @@
    tools/check_layout.py verifica che questi numeri restino allineati
    a sdk/linker/game.ld e al defsym della RAM in CMakeLists.txt. */
 
-#define LIPPUS_API_VERSION 2u
+#define LIPPUS_API_VERSION 3u
 
 #define LIPPUS_SCREEN_W 320
 #define LIPPUS_SCREEN_H 240

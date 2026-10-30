@@ -47,3 +47,5 @@ void lippus_tune(uint8_t voice, uint8_t wave, uint8_t volume, const lippus_note_
 
 uint32_t lippus_ticks(void);
 void lippus_sleep(uint32_t ms);
+int lippus_record_read(const char *name, void *dst, uint32_t cap);
+int lippus_record_write(const char *name, const void *src, uint32_t len);

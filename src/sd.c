@@ -181,3 +181,49 @@ bool sd_read_block(uint32_t lba, uint8_t *dst) {
     s_err = "lettura SD";
     return false;
 }
+
+bool sd_write_block(uint32_t lba, const uint8_t *src) {
+    uint32_t arg = s_ccs ? lba : (lba << 9);
+    for (int attempt = 0; attempt < 3; attempt++) {
+        int response = sd_cmd(24, arg, 0, 0, true);
+        if (response != 0) {
+            cs_high();
+            xchg(0xFF);
+            continue;
+        }
+        xchg(0xFF);
+        xchg(0xFE);
+        spi_write_blocking(spi1, src, 512);
+        xchg(0xFF);
+        xchg(0xFF);
+        int accepted = 0;
+        uint32_t start = time_us_32();
+        while ((uint32_t)(time_us_32() - start) < 250000u) {
+            int token = xchg(0xFF);
+            if ((token & 0x1F) == 0x05) {
+                accepted = 1;
+                break;
+            }
+            if (token != 0xFF && (token & 0x1F) != 0x00) {
+                break;
+            }
+        }
+        if (!accepted) {
+            cs_high();
+            xchg(0xFF);
+            continue;
+        }
+        start = time_us_32();
+        while ((uint32_t)(time_us_32() - start) < 500000u) {
+            if (xchg(0xFF) == 0xFF) {
+                cs_high();
+                xchg(0xFF);
+                return true;
+            }
+        }
+        cs_high();
+        xchg(0xFF);
+    }
+    s_err = "scrittura SD";
+    return false;
+}

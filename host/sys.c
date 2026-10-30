@@ -2,7 +2,11 @@
 
 #include "lippus/layout.h"
 
+#include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static lippus_api_t api;
@@ -84,6 +88,77 @@ void sys_frame(uint32_t frame_ms) {
     frame_next = now + frame_ms;
 }
 
+static int record_sfn(const char *name, char *out) {
+    int n = 0;
+    if (!name) {
+        return 0;
+    }
+    for (const char *p = name; *p; p++) {
+        char ch = *p;
+        if (ch >= 'a' && ch <= 'z') {
+            ch = (char)(ch - 32);
+        }
+        int ok = (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+        if (!ok || n >= 8) {
+            return 0;
+        }
+        out[n++] = ch;
+    }
+    out[n] = 0;
+    return n > 0;
+}
+
+static int host_record_read(const char *name, void *dst, uint32_t cap) {
+    char base[9];
+    char path[32];
+    FILE *file;
+    size_t got;
+    if (!record_sfn(name, base) || !dst) {
+        return -1;
+    }
+    memcpy(path, "record/", 7);
+    memcpy(path + 7, base, strlen(base) + 1);
+    file = fopen(path, "rb");
+    if (!file) {
+        return 0;
+    }
+    got = fread(dst, 1, cap, file);
+    if (ferror(file)) {
+        fclose(file);
+        return -1;
+    }
+    fclose(file);
+    return (int)got;
+}
+
+static int host_record_write(const char *name, const void *src, uint32_t len) {
+    char base[9];
+    char path[32];
+    FILE *file;
+    size_t got;
+    if (!record_sfn(name, base) || (len > 0 && !src)) {
+        return -1;
+    }
+    if (mkdir("record", 0755) != 0 && errno != EEXIST) {
+        return -1;
+    }
+    memcpy(path, "record/", 7);
+    memcpy(path + 7, base, strlen(base) + 1);
+    file = fopen(path, "wb");
+    if (!file) {
+        return -1;
+    }
+    got = len ? fwrite(src, 1, len, file) : 0;
+    if (ferror(file) || got != len) {
+        fclose(file);
+        return -1;
+    }
+    if (fclose(file) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
 void host_bind_api(int width, int height) {
     api.version = LIPPUS_API_VERSION;
     api.width = (uint16_t)width;
@@ -107,6 +182,8 @@ void host_bind_api(int width, int height) {
     api.exit_to_menu = host_quit;
     api.sound = host_sound;
     api.tune = host_tune;
+    api.record_read = host_record_read;
+    api.record_write = host_record_write;
     g_lippus_api = &api;
     host_gfx_init(width, height);
 }

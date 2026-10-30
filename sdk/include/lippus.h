@@ -17,6 +17,8 @@
  * Lo stack e' circa 4 KB: gli array grossi vanno in variabili globali
  * o in sys_alloc(), non come variabili locali.
  * START + SELECT tenuti premuti riportano al menu.
+ * Le classifiche stanno sulla SD in /record/<gioco>: sys_record_read e
+ * sys_record_write. La cartella si puo' copiare su un'altra scheda.
  */
 
 #include "lippus/audio.h"

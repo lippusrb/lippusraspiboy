@@ -1,7 +1,7 @@
 #include "lippus.h"
+#include "sprites.h"
 
-/* Maze Mouse, in verticale. Celle e sprite 16x16: piu' grandi dell'8x8
-   originale, con ancora abbastanza corridoi sullo schermo 240x320. */
+/* Maze Mouse, in verticale. Celle 16x16; il topo e' 32x32 con l'arte al centro. */
 
 const uint32_t lippus_orientation = LIPPUS_PORTRAIT;
 
@@ -24,32 +24,86 @@ const uint32_t lippus_orientation = LIPPUS_PORTRAIT;
 #define ST_DEAD 3
 #define ST_WIN 4
 #define ST_OVER 5
+#define ST_ATTRACT 6
+#define ST_NAME 7
 
 #define TUNNEL_R 7
-#define MOUSE_C 7
-#define MOUSE_R 13
 #define HIT_R2 100
+#define MAZES 10
+#define SCORE_N 20
+#define RECORD_NAME "MAZEMOUS"
+#define MAX_LIVES 4
 
-static const char *const k_rows[] = {
-    "##############",
-    "#o..........o#",
-    "#.##.####.##.#",
-    "#.##.####.##.#",
-    "#............#",
-    "##.##....##.##",
-    "##.##.##.##.##",
-    "    ......    ",
-    "##.##.##.##.##",
-    "##.##.##.##.##",
-    "#............#",
-    "##.###--###.##",
-    "##.#      #.##",
-    "#............#",
-    "#o.####.####o#",
-    "##############",
+/* Un giro vale circa 1200 punti, circa 4000 se mangi un gruppo di gatti.
+   10000 arriva dopo qualche livello; 30000 e 70000 restituiscono una vita persa. */
+static const int k_life_bonus[] = {10000, 30000, 70000};
+#define LIFE_BONUS_N (int)(sizeof k_life_bonus / sizeof k_life_bonus[0])
+
+/* Dieci labirinti. '@' e' la partenza del topo, '--' la porta dei gatti. */
+static const char k_mazes[MAZES][16][15] = {
+    {
+        "##############", "#o..........o#", "#.##.####.##.#", "#.##.####.##.#", "#............#",
+        "##.##....##.##", "##.##.##.##.##", "    ......    ", "##.##.##.##.##", "##.##.##.##.##",
+        "#............#", "##.###--###.##", "##.#      #.##", "#.....@......#", "#o.####.####o#",
+        "##############",
+    },
+    {
+        "##############", "#o..........o#", "#............#", "##.###--###.##", "##.#      #.##",
+        "#............#", "#.#........#.#", "    ......    ", "#.#.##..##.#.#", "#.#........#.#",
+        "#.##.####.##.#", "#............#", "#.##.#..#.##.#", "#@...........#", "#o#........#o#",
+        "##############",
+    },
+    {
+        "##############", "#o#........#o#", "#.#.##..##.#.#", "#............#", "#.##.####.##.#",
+        "#............#", "#.##.####.##.#", "    ......    ", "#.##.####.##.#", "#............#",
+        "##.###--###.##", "##.#      #.##", "#............#", "#@#........#.#", "#o#........#o#",
+        "##############",
+    },
+    {
+        "##############", "#o.##....##.o#", "#...#.##.#...#", "#.###.##.###.#", "#............#",
+        "#.###....###.#", "#...#.##.#...#", "    ......    ", "#...#.##.#...#", "#.###....###.#",
+        "#............#", "##.###--###.##", "##.#      #.##", "#.....@......#", "#o.##....##.o#",
+        "##############",
+    },
+    {
+        "##############", "#o..........o#", "#.###.##.###.#", "#............#", "##.###--###.##",
+        "##.#      #.##", "#............#", "    ......    ", "#.###.##.###.#", "#............#",
+        "#.###.##.###.#", "#............#", "#.###.##.###.#", "#@...........#", "#o..........o#",
+        "##############",
+    },
+    {
+        "##############", "#o..........o#", "#.##.#..#.##.#", "#....#..#....#", "#.##.#..#.##.#",
+        "#............#", "##.###--###.##", "    #    #    ", "##.#      #.##", "#............#",
+        "#.##.#..#.##.#", "#....#..#....#", "#.##.#..#.##.#", "#@...........#", "#o..........o#",
+        "##############",
+    },
+    {
+        "##############", "#o..........o#", "#.##########.#", "#.#........#.#", "#.#.######.#.#",
+        "#.#........#.#", "#.#.##--##.#.#", "    #.  .#    ", "#.#.#.  .#.#.#", "#.#......#.#.#",
+        "#.########.#.#", "#..........#.#", "#.##########.#", "#@...........#", "#o..........o#",
+        "##############",
+    },
+    {
+        "##############", "#o##......##o#", "#............#", "#.##########.#", "#.#........#.#",
+        "#.#.######.#.#", "#.#........#.#", "    ......    ", "#.#.######.#.#", "#.#........#.#",
+        "#............#", "##.###--###.##", "##.#      #.##", "#@...........#", "#o##......##o#",
+        "##############",
+    },
+    {
+        "##############", "#o#.#....#.#o#", "#.#.#.##.#.#.#", "#...#.##.#...#", "#.#...##...#.#",
+        "#.#.######.#.#", "#............#", "    ......    ", "#.##########.#", "#............#",
+        "##.###--###.##", "##.#      #.##", "#............#", "#@...........#", "#o#.#....#.#o#",
+        "##############",
+    },
+    {
+        "##############", "#o..........o#", "#.###.##.###.#", "#.#........#.#", "#.#.###..###.#",
+        "#.#........#.#", "#.###.##.###.#", "    ......    ", "#............#", "#.##.####.##.#",
+        "#............#", "#............#", "##.###--###.##", "##.#      #.##", "#o....@.....o#",
+        "##############",
+    },
 };
 
-#define ROWS (int)(sizeof k_rows / sizeof k_rows[0])
+#define ROWS 16
 
 static const int8_t k_dx[4] = {0, -1, 0, 1};
 static const int8_t k_dy[4] = {-1, 0, 1, 0};
@@ -65,23 +119,19 @@ static const uint8_t k_elroy_dots[21] = {
     20, 30, 40, 40, 40, 50, 50, 50, 60, 60, 60, 80, 80, 80, 100, 100, 100, 100, 120, 120, 120,
 };
 
-static const uint16_t k_cat_col[4] = {
-    LIPPUS_ORANGE,
-    LIPPUS_RGB(170, 174, 184),
-    LIPPUS_RGB(96, 72, 58),
-    LIPPUS_RGB(214, 186, 140),
-};
-
 static uint8_t g_map[16][COLS];
 static int g_ox;
 static int g_oy;
 static int g_door_c;
 static int g_door_r;
+static int g_start_c;
+static int g_start_r;
 static int g_dots;
 static int g_dots0;
 static int g_score;
 static int g_lives;
 static int g_level;
+static int g_bonus_i;
 static int g_state;
 static int g_timer;
 static int g_fright;
@@ -112,6 +162,21 @@ static int g_eat_x;
 static int g_eat_y;
 static int g_eat_pts;
 static uint32_t g_rng = 0x6D2B79F5u;
+
+typedef struct {
+    char name[3];
+    int score;
+} score_t;
+
+static score_t g_scores[SCORE_N];
+static int g_score_n;
+static int g_rank;
+static int g_name_i;
+static int g_letter_hold;
+static int g_attract_page;
+static int g_attract_t;
+static char g_initials[3];
+static char g_rec[LIPPUS_RECORD_MAX];
 
 typedef struct {
     int x;
@@ -186,13 +251,57 @@ static int open_cell(int c, int r, int ghost) {
     return 1;
 }
 
+static int level_slot(void);
+
+static int maze_no(void) {
+    int lv = g_level < 1 ? 1 : g_level;
+    return (lv - 1) % MAZES;
+}
+
+static int pace_ghost(int pct) {
+    int lv = g_level < 1 ? 1 : g_level;
+    if (lv > MAZES) {
+        pct += (lv - MAZES) * 2;
+    }
+    if (pct > 140) {
+        pct = 140;
+    }
+    return pct;
+}
+
+static int pace_mouse(int pct) {
+    int lv = g_level < 1 ? 1 : g_level;
+    if (lv > MAZES) {
+        pct += (lv - MAZES) / 2;
+    }
+    if (pct > 120) {
+        pct = 120;
+    }
+    return pct;
+}
+
+static int fright_seconds(void) {
+    int s = k_fright_s[level_slot()];
+    int lv = g_level < 1 ? 1 : g_level;
+    if (lv > MAZES) {
+        s -= (lv - MAZES) / 3;
+    }
+    if (s < 0) {
+        s = 0;
+    }
+    return s;
+}
+
 static void load_map(void) {
+    int maze = maze_no();
     g_dots = 0;
     g_door_c = 7;
     g_door_r = 11;
+    g_start_c = 1;
+    g_start_r = 13;
     for (int r = 0; r < ROWS; r++) {
         for (int c = 0; c < COLS; c++) {
-            char ch = k_rows[r][c];
+            char ch = k_mazes[maze][r][c];
             uint8_t tile = T_EMPTY;
             if (ch == '#') {
                 tile = T_WALL;
@@ -202,6 +311,9 @@ static void load_map(void) {
             } else if (ch == 'o') {
                 tile = T_POWER;
                 g_dots++;
+            } else if (ch == '@') {
+                g_start_c = c;
+                g_start_r = r;
             } else if (ch == '-') {
                 tile = T_DOOR;
                 g_door_c = c;
@@ -335,18 +447,18 @@ static int ghost_move_pct(int index, const ghost_t *g) {
     int tier = index == 0 ? elroy_tier() : 0;
     cell_of(&g->b, &c, &r);
     if (in_tunnel(c, r) && tier == 0) {
-        return tunnel_pct();
+        return pace_ghost(tunnel_pct());
     }
     if (g_fright > 0) {
-        return fright_spd_pct();
+        return pace_ghost(fright_spd_pct());
     }
     if (tier == 2) {
-        return elroy_spd_pct(2);
+        return pace_ghost(elroy_spd_pct(2));
     }
     if (tier == 1) {
-        return elroy_spd_pct(1);
+        return pace_ghost(elroy_spd_pct(1));
     }
-    return ghost_normal_pct();
+    return pace_ghost(ghost_normal_pct());
 }
 
 static int ghost_limit(int index) {
@@ -459,27 +571,97 @@ static int fruit_points(void) {
     return 5000;
 }
 
-static uint16_t fruit_color(void) {
+static const uint16_t *fruit_sprite(void) {
+    /* Stessi scaglioni dei punti: un frutto diverso a ogni salto. */
+    static const uint16_t *const k_by_level[] = {
+        k_frutto_ciliegie, k_frutto_fragola, k_frutto_arancia, k_frutto_arancia,
+        k_frutto_mela,      k_frutto_mela,    k_frutto_anguria, k_frutto_anguria,
+        k_frutto_uva,       k_frutto_uva,     k_frutto_limone,  k_frutto_limone,
+        k_frutto_banana,    k_frutto_banana,  k_frutto_ananas,
+    };
     int lv = g_level;
-    if (lv <= 2) {
-        return LIPPUS_RED;
+    if (lv < 1) {
+        lv = 1;
     }
-    if (lv <= 4) {
-        return LIPPUS_ORANGE;
+    if (lv > (int)(sizeof k_by_level / sizeof k_by_level[0])) {
+        lv = (int)(sizeof k_by_level / sizeof k_by_level[0]);
     }
-    if (lv <= 6) {
-        return LIPPUS_RGB(180, 0, 48);
+    return k_by_level[lv - 1];
+}
+
+static void blit_spr(int cx, int cy, const uint16_t *pixels) {
+    gfx_blit(cx - SPR_W / 2, cy - SPR_H / 2, SPR_W, SPR_H, pixels, 1, LIPPUS_COLOR_KEY);
+}
+
+static void blit_cat_spr(int cx, int cy, const uint16_t *pixels) {
+    gfx_blit(cx - CAT_SPR / 2, cy - CAT_SPR / 2, CAT_SPR, CAT_SPR, pixels, 1, LIPPUS_COLOR_KEY);
+}
+
+static void blit_mouse(int cx, int cy, const uint16_t *pixels) {
+    gfx_blit(cx - MOUSE_SPR / 2, cy - MOUSE_SPR / 2, MOUSE_SPR, MOUSE_SPR, pixels, 1, LIPPUS_COLOR_KEY);
+}
+
+static const uint16_t *mouse_sprite(int dir) {
+    /* Sheet: 4 frame di camminata. La sinistra e' lo specchio della destra. */
+    static const uint16_t *const tab[4][MOUSE_FRAMES] = {
+        {k_topo_su0, k_topo_su1, k_topo_su2, k_topo_su3},
+        {k_topo_sinistra0, k_topo_sinistra1, k_topo_sinistra2, k_topo_sinistra3},
+        {k_topo_giu0, k_topo_giu1, k_topo_giu2, k_topo_giu3},
+        {k_topo_destra0, k_topo_destra1, k_topo_destra2, k_topo_destra3},
+    };
+    int frame = (g_frame / 4) % MOUSE_FRAMES;
+    if (dir < DIR_UP || dir > DIR_RIGHT) {
+        dir = DIR_LEFT;
     }
-    if (lv <= 8) {
-        return LIPPUS_GREEN;
+    return tab[dir][frame];
+}
+
+static const uint16_t *cat_sprite(int index, int dir) {
+    /* Sheet: riga giu/sx/dx/su, 3 frame di camminata. */
+    static const uint16_t *const tab[4][4][CAT_FRAMES] = {
+        {
+            {k_gatto_arancio_giu0, k_gatto_arancio_giu1, k_gatto_arancio_giu2},
+            {k_gatto_arancio_sinistra0, k_gatto_arancio_sinistra1, k_gatto_arancio_sinistra2},
+            {k_gatto_arancio_destra0, k_gatto_arancio_destra1, k_gatto_arancio_destra2},
+            {k_gatto_arancio_su0, k_gatto_arancio_su1, k_gatto_arancio_su2},
+        },
+        {
+            {k_gatto_grigio_giu0, k_gatto_grigio_giu1, k_gatto_grigio_giu2},
+            {k_gatto_grigio_sinistra0, k_gatto_grigio_sinistra1, k_gatto_grigio_sinistra2},
+            {k_gatto_grigio_destra0, k_gatto_grigio_destra1, k_gatto_grigio_destra2},
+            {k_gatto_grigio_su0, k_gatto_grigio_su1, k_gatto_grigio_su2},
+        },
+        {
+            {k_gatto_marrone_giu0, k_gatto_marrone_giu1, k_gatto_marrone_giu2},
+            {k_gatto_marrone_sinistra0, k_gatto_marrone_sinistra1, k_gatto_marrone_sinistra2},
+            {k_gatto_marrone_destra0, k_gatto_marrone_destra1, k_gatto_marrone_destra2},
+            {k_gatto_marrone_su0, k_gatto_marrone_su1, k_gatto_marrone_su2},
+        },
+        {
+            {k_gatto_crema_giu0, k_gatto_crema_giu1, k_gatto_crema_giu2},
+            {k_gatto_crema_sinistra0, k_gatto_crema_sinistra1, k_gatto_crema_sinistra2},
+            {k_gatto_crema_destra0, k_gatto_crema_destra1, k_gatto_crema_destra2},
+            {k_gatto_crema_su0, k_gatto_crema_su1, k_gatto_crema_su2},
+        },
+    };
+    int d;
+    int frame = (g_frame / 5) % CAT_FRAMES;
+    if (index < 0) {
+        index = 0;
     }
-    if (lv <= 10) {
-        return LIPPUS_CYAN;
+    if (index > 3) {
+        index = 3;
     }
-    if (lv <= 12) {
-        return LIPPUS_YELLOW;
+    if (dir == DIR_DOWN) {
+        d = 0;
+    } else if (dir == DIR_LEFT) {
+        d = 1;
+    } else if (dir == DIR_RIGHT) {
+        d = 2;
+    } else {
+        d = 3;
     }
-    return LIPPUS_WHITE;
+    return tab[index][d][frame];
 }
 
 static void setup_waves(void) {
@@ -513,9 +695,9 @@ static void setup_waves(void) {
 }
 
 static void reset_actors(void) {
-    place(&g_pac, MOUSE_C, MOUSE_R, DIR_LEFT);
-    if (g_map[MOUSE_R][MOUSE_C] == T_DOT || g_map[MOUSE_R][MOUSE_C] == T_POWER) {
-        g_map[MOUSE_R][MOUSE_C] = T_EMPTY;
+    place(&g_pac, g_start_c, g_start_r, DIR_LEFT);
+    if (g_map[g_start_r][g_start_c] == T_DOT || g_map[g_start_r][g_start_c] == T_POWER) {
+        g_map[g_start_r][g_start_c] = T_EMPTY;
         g_dots--;
     }
     place(&g_ghosts[0].b, g_door_c, g_door_r - 1, DIR_LEFT);
@@ -746,6 +928,21 @@ static void tick_mode(void) {
     reverse_ghosts();
 }
 
+static void add_score(int pts) {
+    int gained = 0;
+    g_score += pts;
+    while (g_bonus_i < LIFE_BONUS_N && g_score >= k_life_bonus[g_bonus_i]) {
+        g_bonus_i++;
+        if (g_lives < MAX_LIVES) {
+            g_lives++;
+            gained = 1;
+        }
+    }
+    if (gained) {
+        snd_voice(3, SND_TRIANGLE, 1046, 90, 140);
+    }
+}
+
 static void eat_dot(void) {
     if (!centered(&g_pac)) {
         return;
@@ -760,14 +957,14 @@ static void eat_dot(void) {
     if (tile == T_DOT) {
         g_map[r][c] = T_EMPTY;
         g_dots--;
-        g_score += 10;
+        add_score(10);
         on_dot_eaten();
         snd_voice(1, SND_SQUARE, 1180, 24, 16);
     } else if (tile == T_POWER) {
-        int frames = k_fright_s[level_slot()] * 30;
+        int frames = fright_seconds() * 30;
         g_map[r][c] = T_EMPTY;
         g_dots--;
-        g_score += 50;
+        add_score(50);
         on_dot_eaten();
         if (frames > 0) {
             g_fright = frames;
@@ -787,7 +984,7 @@ static void eat_dot(void) {
     if (g_fruit > 0 && c == g_fruit_c && r == g_fruit_r) {
         g_fruit = 0;
         g_fruit_pts = fruit_points();
-        g_score += g_fruit_pts;
+        add_score(g_fruit_pts);
         g_fruit_bx = tile_x(c);
         g_fruit_by = tile_y(r);
         g_fruit_banner = 30;
@@ -813,7 +1010,7 @@ static void collide(void) {
                 g_combo = 4;
             }
             g_eat_pts = 200 << (g_combo - 1);
-            g_score += g_eat_pts;
+            add_score(g_eat_pts);
             g_eat_x = g->b.x - 10;
             g_eat_y = g->b.y - 14;
             g_state = ST_EAT;
@@ -874,110 +1071,52 @@ static void read_stick(const lippus_pad_t *pad) {
 }
 
 static void draw_mouse(int x, int y, int dir) {
-    uint16_t fur = LIPPUS_RGB(176, 132, 86);
-    uint16_t ear = LIPPUS_RGB(120, 78, 46);
-    gfx_fill_circle(x - 5, y - 6, 3, ear);
-    gfx_fill_circle(x + 5, y - 6, 3, ear);
-    gfx_fill_circle(x, y, 5, fur);
-    gfx_fill_rect(x - 2, y - 1, 2, 2, LIPPUS_BLACK);
-    if (dir >= 0) {
-        gfx_fill_rect(x + k_dx[dir] * 5, y + k_dy[dir] * 5, 3, 3, LIPPUS_RGB(255, 150, 170));
-        if (dir == DIR_LEFT) {
-            gfx_fill_rect(x + 5, y, 5, 2, ear);
-        } else if (dir == DIR_RIGHT) {
-            gfx_fill_rect(x - 9, y, 5, 2, ear);
-        } else if (dir == DIR_UP) {
-            gfx_fill_rect(x + 3, y + 4, 2, 5, ear);
-        } else {
-            gfx_fill_rect(x + 3, y - 9, 2, 5, ear);
-        }
-    }
+    blit_mouse(x, y, mouse_sprite(dir < 0 ? DIR_LEFT : dir));
 }
 
-static void draw_cat(const ghost_t *g, uint16_t color, int asleep) {
+static void draw_cat(const ghost_t *g, int index, int asleep) {
     int x = g->b.x;
     int y = g->b.y;
-    int px = 0;
-    int py = 0;
-    if (!asleep && g->b.dir >= 0) {
-        px = k_dx[g->b.dir];
-        py = k_dy[g->b.dir];
-    }
-    if (!g->eyes) {
-        gfx_fill_rect(x - 6, y - 11, 5, 5, color);
-        gfx_fill_rect(x + 2, y - 11, 5, 5, color);
-        gfx_fill_circle(x, y - 3, 6, color);
-        gfx_fill_rect(x - 6, y - 3, 13, 8, color);
-        if (g->b.dir == DIR_LEFT) {
-            gfx_fill_rect(x + 5, y, 5, 3, color);
-        } else if (g->b.dir == DIR_RIGHT) {
-            gfx_fill_rect(x - 10, y, 5, 3, color);
-        } else if (g->b.dir == DIR_DOWN) {
-            gfx_fill_rect(x + 4, y - 9, 3, 5, color);
-        } else {
-            gfx_fill_rect(x + 4, y + 4, 3, 5, color);
-        }
+    if (g->eyes) {
+        blit_spr(x, y, k_gatto_occhi);
+        return;
     }
     if (asleep) {
-        gfx_fill_rect(x - 4, y - 4, 3, 2, LIPPUS_BLACK);
-        gfx_fill_rect(x + 2, y - 4, 3, 2, LIPPUS_BLACK);
-    } else {
-        gfx_fill_rect(x - 4, y - 5, 3, 3, LIPPUS_WHITE);
-        gfx_fill_rect(x + 2, y - 5, 3, 3, LIPPUS_WHITE);
-        gfx_fill_rect(x - 3 + px, y - 4 + py, 2, 2, LIPPUS_BLACK);
-        gfx_fill_rect(x + 3 + px, y - 4 + py, 2, 2, LIPPUS_BLACK);
+        int flash = g_fright < g_flash_from && ((g_fright / 8) & 1);
+        if (flash) {
+            gfx_fill_circle(x, y - 1, 10, LIPPUS_WHITE);
+            gfx_fill_rect(x - 8, y - 2, 16, 12, LIPPUS_WHITE);
+        } else {
+            blit_cat_spr(x, y, k_gatto_sonno);
+        }
+        return;
     }
+    blit_cat_spr(x, y, cat_sprite(index, g->b.dir < 0 ? DIR_LEFT : g->b.dir));
 }
 
 static void draw_maze(void) {
-    const uint16_t brick = LIPPUS_RGB(150, 78, 52);
-    const uint16_t mortar = LIPPUS_RGB(86, 46, 34);
-    const uint16_t pipe = LIPPUS_RGB(132, 140, 152);
-    const uint16_t shine = LIPPUS_RGB(206, 212, 220);
     for (int r = 0; r < ROWS; r++) {
-        int c = 0;
-        while (c < COLS) {
-            if (g_map[r][c] != T_WALL) {
-                c++;
-                continue;
-            }
-            int c0 = c;
-            while (c < COLS && g_map[r][c] == T_WALL) {
-                c++;
-            }
-            int x0 = g_ox + c0 * TILE;
-            int y0 = g_oy + r * TILE;
-            int w = (c - c0) * TILE;
-            gfx_fill_rect(x0, y0, w, TILE, brick);
-            gfx_fill_rect(x0, y0 + TILE - 2, w, 2, mortar);
-            if (c - c0 >= 2) {
-                gfx_fill_rect(x0, y0 + 5, w, 3, pipe);
-                gfx_fill_rect(x0, y0 + 5, w, 1, shine);
-            }
-        }
-        for (c = 0; c < COLS; c++) {
+        for (int c = 0; c < COLS; c++) {
             int x = g_ox + c * TILE;
             int y = g_oy + r * TILE;
             uint8_t tile = g_map[r][c];
-            if (tile == T_DOT) {
-                gfx_fill_rect(x + 4, y + 5, 8, 6, LIPPUS_YELLOW);
-                gfx_fill_rect(x + 5, y + 4, 6, 2, LIPPUS_YELLOW);
-                gfx_fill_rect(x + 7, y + 8, 2, 2, LIPPUS_RGB(196, 140, 24));
+            if (tile == T_WALL) {
+                int run = (c > 0 && g_map[r][c - 1] == T_WALL) ||
+                          (c + 1 < COLS && g_map[r][c + 1] == T_WALL);
+                gfx_blit(x, y, SPR_W, SPR_H, run ? k_muro_tubo : k_muro, 0, 0);
+            } else if (tile == T_DOT) {
+                blit_spr(x + TILE / 2, y + TILE / 2, k_formaggio);
             } else if (tile == T_POWER) {
                 if ((g_frame & 16) == 0) {
-                    gfx_fill_rect(x + 3, y + 7, 10, 5, LIPPUS_WHITE);
-                    gfx_fill_rect(x + 4, y + 4, 8, 5, LIPPUS_RGB(198, 226, 255));
+                    blit_spr(x + TILE / 2, y + TILE / 2, k_ciotola);
                 }
             } else if (tile == T_DOOR) {
-                gfx_fill_rect(x, y + TILE / 2 - 2, TILE, 4, LIPPUS_RGB(92, 58, 36));
+                gfx_blit(x, y, SPR_W, SPR_H, k_porta, 1, LIPPUS_COLOR_KEY);
             }
         }
     }
     if (g_fruit > 0) {
-        int x = tile_x(g_fruit_c);
-        int y = tile_y(g_fruit_r);
-        gfx_fill_circle(x, y, 5, fruit_color());
-        gfx_fill_rect(x - 1, y - 7, 2, 4, LIPPUS_RGB(80, 48, 16));
+        blit_spr(tile_x(g_fruit_c), tile_y(g_fruit_r), fruit_sprite());
     }
 }
 
@@ -995,23 +1134,60 @@ static void format_u(char *dst, unsigned value) {
     dst[used] = 0;
 }
 
-static void draw_hud(void) {
-    char score[8];
-    char level[4];
-    format_u(score, (unsigned)g_score);
-    format_u(level, (unsigned)g_level);
-    gfx_text(8, 6, score, LIPPUS_CREAM, 1);
-    gfx_text(gfx_width() - 8 - gfx_text_width(level, 1), 6, level, LIPPUS_AMBER, 1);
-    int extras = g_lives - 1;
-    if (extras < 0) {
-        extras = 0;
+static void prefix_u(char *dst, const char *prefix, unsigned value) {
+    while (*prefix) {
+        *dst++ = *prefix++;
     }
-    for (int i = 0; i < extras; i++) {
-        int x = 16 + i * 18;
-        int y = gfx_height() - 14;
-        gfx_fill_circle(x - 3, y - 4, 2, LIPPUS_RGB(120, 78, 46));
-        gfx_fill_circle(x + 3, y - 4, 2, LIPPUS_RGB(120, 78, 46));
-        gfx_fill_circle(x, y, 4, LIPPUS_RGB(176, 132, 86));
+    format_u(dst, value);
+}
+
+static void blit_life(int x, int y) {
+    static uint16_t icon[64];
+    static int ready;
+    if (!ready) {
+        for (int row = 0; row < 8; row++) {
+            for (int col = 0; col < 8; col++) {
+                icon[row * 8 + col] = k_vita[(row * 2) * 16 + col * 2];
+            }
+        }
+        ready = 1;
+    }
+    gfx_blit(x, y, 8, 8, icon, 1, LIPPUS_COLOR_KEY);
+}
+
+static void draw_hud(void) {
+    char score[16];
+    char next[8];
+    char level[8];
+    int y = 2;
+    prefix_u(score, "SCORE ", (unsigned)g_score);
+    gfx_text(2, y, score, LIPPUS_CREAM, 1);
+    int x = 2 + gfx_text_width(score, 1);
+    if (g_bonus_i < LIFE_BONUS_N) {
+        gfx_text(x, y, "/", LIPPUS_CREAM, 1);
+        x += gfx_text_width("/", 1);
+        format_u(next, (unsigned)k_life_bonus[g_bonus_i]);
+        gfx_text(x, y, next, LIPPUS_GREEN, 1);
+    }
+
+    prefix_u(level, "Lv ", (unsigned)g_level);
+    int level_x = gfx_width() - 2 - gfx_text_width(level, 1);
+    gfx_text(level_x, y, level, LIPPUS_AMBER, 1);
+
+    int lives = g_lives;
+    if (lives < 0) {
+        lives = 0;
+    }
+    if (lives > MAX_LIVES) {
+        lives = MAX_LIVES;
+    }
+    if (lives > 0) {
+        int mice_w = lives * 9 - 1;
+        int mx = level_x - 4 - mice_w;
+        for (int i = 0; i < lives; i++) {
+            blit_life(mx, y);
+            mx += 9;
+        }
     }
 }
 
@@ -1022,16 +1198,11 @@ static void draw_world(void) {
     for (int i = 0; i < 4; i++) {
         ghost_t *g = &g_ghosts[i];
         int asleep = g_fright > 0 && !g->eyes;
-        uint16_t color = k_cat_col[i];
-        if (asleep) {
-            int flash = g_fright < g_flash_from && ((g_fright / 8) & 1);
-            color = flash ? LIPPUS_WHITE : LIPPUS_RGB(96, 116, 168);
-        }
-        draw_cat(g, color, asleep);
+        draw_cat(g, i, asleep);
         if (g->b.x - g_ox < TILE) {
             body_t copy = g->b;
             g->b.x += span;
-            draw_cat(g, color, asleep);
+            draw_cat(g, i, asleep);
             g->b = copy;
         }
     }
@@ -1051,12 +1222,293 @@ static void draw_world(void) {
     }
     draw_hud();
     if (g_state == ST_READY) {
-        gfx_text((gfx_width() - gfx_text_width("VIA", 2)) / 2, g_oy + 5 * TILE, "VIA", LIPPUS_YELLOW, 2);
+        gfx_text((gfx_width() - gfx_text_width("READY", 2)) / 2, g_oy + 5 * TILE, "READY", LIPPUS_YELLOW, 2);
     } else if (g_state == ST_OVER) {
-        gfx_text((gfx_width() - gfx_text_width("FINE", 2)) / 2, g_oy + 6 * TILE, "FINE", LIPPUS_RED, 2);
-        gfx_text((gfx_width() - gfx_text_width("A ANCORA", 1)) / 2, g_oy + 8 * TILE, "A ANCORA",
-                 LIPPUS_CREAM, 1);
+        gfx_text((gfx_width() - gfx_text_width("GAME OVER", 2)) / 2, g_oy + 6 * TILE, "GAME OVER",
+                 LIPPUS_RED, 2);
     }
+}
+
+static void center_text(int y, const char *text, uint16_t color, int scale) {
+    gfx_text((gfx_width() - gfx_text_width(text, scale)) / 2, y, text, color, scale);
+}
+
+static int score_qualifies(int score) {
+    if (score <= 0) {
+        return 0;
+    }
+    if (g_score_n < SCORE_N) {
+        return 1;
+    }
+    return score > g_scores[g_score_n - 1].score;
+}
+
+static void scores_load(void) {
+    int got;
+    int i = 0;
+    g_score_n = 0;
+    got = sys_record_read(RECORD_NAME, g_rec, LIPPUS_RECORD_MAX - 1);
+    if (got <= 0) {
+        return;
+    }
+    if (got > (int)LIPPUS_RECORD_MAX - 1) {
+        got = (int)LIPPUS_RECORD_MAX - 1;
+    }
+    g_rec[got] = 0;
+    while (g_rec[i] && g_score_n < SCORE_N) {
+        int used = 0;
+        int score;
+        char a;
+        char b;
+        char c;
+        if (g_rec[i] == '\n' || g_rec[i] == '\r') {
+            i++;
+            continue;
+        }
+        if (i + 3 >= got) {
+            break;
+        }
+        a = g_rec[i];
+        b = g_rec[i + 1];
+        c = g_rec[i + 2];
+        if (a < 'A' || a > 'Z' || b < 'A' || b > 'Z' || c < 'A' || c > 'Z' || g_rec[i + 3] != ' ') {
+            while (g_rec[i] && g_rec[i] != '\n') {
+                i++;
+            }
+            continue;
+        }
+        score = 0;
+        i += 4;
+        while (g_rec[i] >= '0' && g_rec[i] <= '9' && used < 9) {
+            score = score * 10 + (g_rec[i] - '0');
+            i++;
+            used++;
+        }
+        if (used > 0 && score > 0) {
+            g_scores[g_score_n].name[0] = a;
+            g_scores[g_score_n].name[1] = b;
+            g_scores[g_score_n].name[2] = c;
+            g_scores[g_score_n].score = score;
+            g_score_n++;
+        }
+        while (g_rec[i] && g_rec[i] != '\n') {
+            i++;
+        }
+    }
+}
+
+static void scores_save(void) {
+    int n = 0;
+    for (int i = 0; i < g_score_n; i++) {
+        char num[8];
+        if (n + 16 >= (int)LIPPUS_RECORD_MAX) {
+            break;
+        }
+        g_rec[n++] = g_scores[i].name[0];
+        g_rec[n++] = g_scores[i].name[1];
+        g_rec[n++] = g_scores[i].name[2];
+        g_rec[n++] = ' ';
+        format_u(num, (unsigned)g_scores[i].score);
+        for (int k = 0; num[k]; k++) {
+            g_rec[n++] = num[k];
+        }
+        g_rec[n++] = '\n';
+    }
+    sys_record_write(RECORD_NAME, g_rec, n);
+}
+
+static void score_insert(int score) {
+    int at = g_score_n;
+    int last;
+    for (int i = 0; i < g_score_n; i++) {
+        if (score > g_scores[i].score) {
+            at = i;
+            break;
+        }
+    }
+    if (at >= SCORE_N) {
+        g_rank = -1;
+        return;
+    }
+    last = g_score_n < SCORE_N ? g_score_n : SCORE_N - 1;
+    for (int i = last; i > at; i--) {
+        g_scores[i] = g_scores[i - 1];
+    }
+    g_scores[at].name[0] = g_initials[0];
+    g_scores[at].name[1] = g_initials[1];
+    g_scores[at].name[2] = g_initials[2];
+    g_scores[at].score = score;
+    if (g_score_n < SCORE_N) {
+        g_score_n++;
+    }
+    g_rank = at;
+}
+
+static void draw_score_row(int y, int rank, const score_t *row, uint16_t color) {
+    char pos[4];
+    char name[4];
+    char num[8];
+    int pos_w;
+    format_u(pos, (unsigned)(rank + 1));
+    name[0] = row->name[0];
+    name[1] = row->name[1];
+    name[2] = row->name[2];
+    name[3] = 0;
+    format_u(num, (unsigned)row->score);
+    pos_w = gfx_text_width(pos, 1);
+    gfx_text(72 - pos_w, y, pos, color, 1);
+    gfx_text(88, y, name, color, 1);
+    gfx_text(184 - gfx_text_width(num, 1), y, num, color, 1);
+}
+
+static void draw_press_start(void) {
+    if ((g_frame & 16) == 0) {
+        center_text(gfx_height() - 18, "PRESS START", LIPPUS_YELLOW, 1);
+    }
+}
+
+static void draw_demo(void) {
+    int t = g_attract_t;
+    const char *caption = "FRUIT SCORES POINTS";
+    center_text(28, "MAZE MOUSE", LIPPUS_AMBER, 2);
+    if (t < 110) {
+        int x = 28 + t * 2;
+        caption = "EAT EVERY CHEESE";
+        if (x > 210) {
+            x = 210;
+        }
+        for (int i = 0; i < 4; i++) {
+            int cx = 56 + i * 36;
+            if (x + 6 < cx) {
+                blit_spr(cx, 150, k_formaggio);
+            }
+        }
+        blit_mouse(x, 150, mouse_sprite(DIR_RIGHT));
+    } else if (t < 220) {
+        int asleep = t > 165;
+        caption = "MILK PUTS CATS TO SLEEP";
+        blit_spr(120, 128, k_ciotola);
+        blit_mouse(120, 88, mouse_sprite(DIR_DOWN));
+        blit_cat_spr(64, 176, asleep ? k_gatto_sonno : cat_sprite(0, DIR_RIGHT));
+        blit_cat_spr(176, 176, asleep ? k_gatto_sonno : cat_sprite(2, DIR_LEFT));
+    } else if (t < 320) {
+        int catx = 36 + (t - 220);
+        caption = "DO NOT GET CAUGHT";
+        if (catx > 150) {
+            catx = 150;
+        }
+        blit_cat_spr(catx, 150, cat_sprite(0, DIR_RIGHT));
+        blit_mouse(196, 150, mouse_sprite(DIR_RIGHT));
+        if (catx < 140 || (g_frame & 8) == 0) {
+            blit_spr(120, 210, k_vita);
+        }
+    } else {
+        blit_mouse(72, 150, mouse_sprite(DIR_RIGHT));
+        blit_spr(140, 150, fruit_sprite());
+        center_text(196, "+1000", LIPPUS_CREAM, 2);
+    }
+    center_text(248, caption, LIPPUS_CREAM, 1);
+}
+
+static void draw_scores(void) {
+    center_text(8, "TOP 20", LIPPUS_AMBER, 2);
+    if (g_score_n == 0) {
+        center_text(120, "NO SCORES YET", LIPPUS_CREAM, 1);
+        return;
+    }
+    for (int i = 0; i < g_score_n; i++) {
+        uint16_t color = (i == g_rank) ? LIPPUS_YELLOW : LIPPUS_CREAM;
+        draw_score_row(32 + i * 12, i, &g_scores[i], color);
+    }
+}
+
+static void draw_attract(void) {
+    gfx_clear(LIPPUS_BLACK);
+    if (g_attract_page == 0) {
+        draw_demo();
+    } else {
+        draw_scores();
+    }
+    draw_press_start();
+}
+
+static void draw_name(void) {
+    char shown[4];
+    gfx_clear(LIPPUS_BLACK);
+    center_text(48, "NEW HIGH SCORE", LIPPUS_AMBER, 1);
+    center_text(72, "YOUR NAME", LIPPUS_CREAM, 1);
+    shown[0] = g_initials[0];
+    shown[1] = g_initials[1];
+    shown[2] = g_initials[2];
+    shown[3] = 0;
+    center_text(120, shown, LIPPUS_YELLOW, 3);
+    if ((g_frame & 8) == 0) {
+        int x = (gfx_width() - gfx_text_width(shown, 3)) / 2 + g_name_i * 24;
+        gfx_fill_rect(x, 148, 20, 3, LIPPUS_YELLOW);
+    }
+    center_text(200, "UP DOWN", LIPPUS_CREAM, 1);
+    center_text(216, "START ENTERS", LIPPUS_CREAM, 1);
+}
+
+static void tick_name(const lippus_pad_t *pad) {
+    int move = 0;
+    if (pad_pressed(pad, LIPPUS_UP)) {
+        move = 1;
+    } else if (pad_pressed(pad, LIPPUS_DOWN)) {
+        move = -1;
+    }
+    if (move == 0 && (pad_held(pad, LIPPUS_UP) || pad_held(pad, LIPPUS_DOWN))) {
+        if (++g_letter_hold > 10 && (g_letter_hold & 3) == 0) {
+            move = pad_held(pad, LIPPUS_UP) ? 1 : -1;
+        }
+    } else {
+        g_letter_hold = 0;
+    }
+    if (move != 0) {
+        char ch = (char)(g_initials[g_name_i] + move);
+        if (ch < 'A') {
+            ch = 'Z';
+        }
+        if (ch > 'Z') {
+            ch = 'A';
+        }
+        g_initials[g_name_i] = ch;
+    }
+    if (pad_pressed(pad, LIPPUS_LEFT) && g_name_i > 0) {
+        g_name_i--;
+    }
+    if (pad_pressed(pad, LIPPUS_RIGHT) && g_name_i < 2) {
+        g_name_i++;
+    }
+    if (pad_pressed(pad, LIPPUS_A) || pad_pressed(pad, LIPPUS_START)) {
+        score_insert(g_score);
+        scores_save();
+        g_attract_page = 1;
+        g_attract_t = 0;
+        g_state = ST_ATTRACT;
+    }
+}
+
+static void enter_attract(int page) {
+    g_state = ST_ATTRACT;
+    g_attract_page = page;
+    g_attract_t = 0;
+    quiet();
+}
+
+static void enter_name(void) {
+    g_initials[0] = 'A';
+    g_initials[1] = 'A';
+    g_initials[2] = 'A';
+    g_name_i = 0;
+    g_letter_hold = 0;
+    g_state = ST_NAME;
+}
+
+static void enter_game_over(void) {
+    quiet();
+    g_state = ST_OVER;
+    g_timer = 120;
 }
 
 static void enter_ready(void) {
@@ -1071,25 +1523,60 @@ static void new_game(void) {
     g_score = 0;
     g_lives = 3;
     g_level = 1;
+    g_bonus_i = 0;
     load_map();
     enter_ready();
 }
 
 void lippus_main(void) {
     g_ox = (gfx_width() - COLS * TILE) / 2;
-    g_oy = 24;
-    new_game();
+    g_oy = 20;
+    g_rank = -1;
+    scores_load();
+    enter_attract(0);
     for (;;) {
         lippus_pad_t pad = pad_poll();
         g_frame++;
         if (g_fruit_banner > 0) {
             g_fruit_banner--;
         }
+        if (g_state == ST_ATTRACT) {
+            if (pad_pressed(&pad, LIPPUS_START)) {
+                g_rank = -1;
+                new_game();
+                draw_world();
+            } else {
+                if (++g_attract_t >= 420) {
+                    g_attract_t = 0;
+                    g_attract_page ^= 1;
+                }
+                draw_attract();
+            }
+            gfx_present();
+            sys_frame(33);
+            continue;
+        }
+        if (g_state == ST_NAME) {
+            tick_name(&pad);
+            if (g_state == ST_NAME) {
+                draw_name();
+            } else {
+                draw_attract();
+            }
+            gfx_present();
+            sys_frame(33);
+            continue;
+        }
         if (g_state == ST_OVER) {
             draw_world();
             gfx_present();
-            if (pad_pressed(&pad, LIPPUS_A) || pad_pressed(&pad, LIPPUS_START)) {
-                new_game();
+            if (--g_timer <= 0) {
+                if (score_qualifies(g_score)) {
+                    enter_name();
+                } else {
+                    g_rank = -1;
+                    enter_attract(1);
+                }
             }
             sys_frame(33);
             continue;
@@ -1108,8 +1595,7 @@ void lippus_main(void) {
                 if (g_lives > 0) {
                     enter_ready();
                 } else {
-                    g_state = ST_OVER;
-                    quiet();
+                    enter_game_over();
                 }
             }
         } else if (g_state == ST_WIN) {
@@ -1121,7 +1607,7 @@ void lippus_main(void) {
         } else {
             read_stick(&pad);
             {
-                int steps = take_pixels(&g_pac_acc, pac_pct(g_chewing));
+                int steps = take_pixels(&g_pac_acc, pace_mouse(pac_pct(g_chewing)));
                 for (int s = 0; s < steps; s++) {
                     step_pac();
                     eat_dot();

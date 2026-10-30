@@ -1,4 +1,5 @@
 #include "lippus.h"
+#include "title.h"
 
 /* Landscape court. Tennis points, first to 3 games.
    One lost game ends the match. Start runs it from the attract mode. */
@@ -13,7 +14,7 @@
 #define SCORE_N 20
 #define RECORD_NAME "BOUNCE"
 #define ATTRACT_LEN 500
-#define DEMO_TOP 40
+#define DEMO_TOP (TITLE_H + 14)
 #define DEMO_BOT 188
 
 #define ST_ATTRACT 0
@@ -25,6 +26,7 @@
 #define ST_OVER 6
 
 #define COL_COURT LIPPUS_RGB(8, 14, 26)
+#define COL_GRASS LIPPUS_RGB(24, 76, 40)
 #define COL_HUD LIPPUS_RGB(14, 18, 34)
 #define COL_LINE LIPPUS_RGB(36, 64, 84)
 #define COL_CPU LIPPUS_RGB(72, 206, 186)
@@ -722,8 +724,8 @@ static void draw_demo_court(int py, int cy, int bx, int by, int ball) {
     py = clamp_i(py, DEMO_TOP + 2, DEMO_TOP + 2 + span);
     cy = clamp_i(cy, DEMO_TOP + 2, DEMO_TOP + 2 + span);
     draw_marks(DEMO_TOP, DEMO_BOT);
-    gfx_text(8, 26, "YOU", LIPPUS_AMBER, 1);
-    text_right(26, "CPU", COL_CPU);
+    gfx_text(8, DEMO_TOP - 12, "YOU", LIPPUS_AMBER, 1);
+    text_right(DEMO_TOP - 12, "CPU", COL_CPU);
     draw_paddles(py, cy);
     if (ball) {
         bx = clamp_i(bx, BALL_R + 2, LIPPUS_SCREEN_W - BALL_R - 2);
@@ -741,7 +743,7 @@ static void draw_demo(void) {
     if (scene > 4) {
         scene = 4;
     }
-    text_center(4, "LIPPUS BOUNCE", LIPPUS_AMBER, 2);
+    gfx_blit(0, 0, TITLE_W, TITLE_H, k_title, 0, 0);
     if (scene == 0) {
         draw_demo_court(DEMO_TOP + 4 + wave(u, 80, span), mid, 0, 0, 0);
     } else if (scene == 1) {
@@ -813,7 +815,7 @@ static void draw_demo(void) {
 }
 
 static void draw_attract(void) {
-    gfx_clear(COL_COURT);
+    gfx_clear(COL_GRASS);
     if (g_attract_page == 0) {
         draw_demo();
     } else {

@@ -13,7 +13,10 @@ typedef struct {
     uint32_t data_lba;
     uint32_t root_cluster;
     uint16_t root_entries;
+    uint32_t clusters;
+    uint32_t alloc_hint;
     uint8_t spc;
+    uint8_t nfats;
     uint8_t fat32;
     uint8_t fat_cache[512];
     uint32_t fat_lba_cached;
@@ -82,6 +85,9 @@ static bool parse_bpb(const uint8_t *sec, uint32_t lba) {
     fs.root_lba = fs.fat_lba + (uint32_t)fats * fatsz;
     fs.root_sectors = root_secs;
     fs.root_entries = root_entries;
+    fs.clusters = clusters;
+    fs.alloc_hint = 2;
+    fs.nfats = fats;
     fs.data_lba = fs.root_lba + root_secs;
     fs.root_cluster = fat32 ? root_cluster : 0;
     fs.fat32 = fat32 ? 1u : 0u;
@@ -403,4 +409,409 @@ int fat_file_read(fat_file_t *file, void *dst, uint32_t len) {
         file->pos += chunk;
     }
     return (int)got;
+}
+
+static void w16(uint8_t *p, uint16_t value) {
+    p[0] = (uint8_t)value;
+    p[1] = (uint8_t)(value >> 8);
+}
+
+static void w32(uint8_t *p, uint32_t value) {
+    p[0] = (uint8_t)value;
+    p[1] = (uint8_t)(value >> 8);
+    p[2] = (uint8_t)(value >> 16);
+    p[3] = (uint8_t)(value >> 24);
+}
+
+static uint8_t rec_sec[512];
+
+typedef struct {
+    uint32_t lba;
+    uint32_t dir_cluster;
+    uint32_t last_cluster;
+    uint32_t start;
+    uint32_t size;
+    uint32_t free_lba;
+    uint32_t free_dir_cluster;
+    uint16_t index;
+    uint16_t free_index;
+    uint8_t attr;
+    uint8_t found;
+    uint8_t free_found;
+} scan_t;
+
+static int sfn_from_name(const char *name, uint8_t out[11]) {
+    memset(out, ' ', 11);
+    if (!name || !name[0]) {
+        return 0;
+    }
+    int n = 0;
+    for (const char *p = name; *p; p++) {
+        char ch = *p;
+        if (ch >= 'a' && ch <= 'z') {
+            ch = (char)(ch - 32);
+        }
+        int ok = (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+        if (!ok || n >= 8) {
+            return 0;
+        }
+        out[n++] = (uint8_t)ch;
+    }
+    return 1;
+}
+
+static bool fat_read_entry(uint32_t cluster, uint32_t *value) {
+    if (cluster < 2u) {
+        return false;
+    }
+    uint32_t offset = fs.fat32 ? cluster * 4u : cluster * 2u;
+    uint32_t lba = fs.fat_lba + offset / 512u;
+    uint32_t index = offset % 512u;
+    if (lba < fs.fat_lba || lba >= fs.fat_lba + fs.fat_size) {
+        return false;
+    }
+    if (fs.fat_lba_cached != lba) {
+        if (!sd_read_block(lba, fs.fat_cache)) {
+            return false;
+        }
+        fs.fat_lba_cached = lba;
+    }
+    if (fs.fat32) {
+        *value = r32(fs.fat_cache + index) & 0x0FFFFFFFu;
+    } else {
+        *value = r16(fs.fat_cache + index);
+    }
+    return true;
+}
+
+static bool fat_write_entry(uint32_t cluster, uint32_t value) {
+    if (fs.nfats == 0) {
+        return false;
+    }
+    uint32_t offset = fs.fat32 ? cluster * 4u : cluster * 2u;
+    uint32_t index = offset % 512u;
+    uint32_t rel = offset / 512u;
+    if (rel >= fs.fat_size) {
+        return false;
+    }
+    for (uint8_t fat = 0; fat < fs.nfats; fat++) {
+        uint32_t lba = fs.fat_lba + (uint32_t)fat * fs.fat_size + rel;
+        if (!sd_read_block(lba, fs.fat_cache)) {
+            return false;
+        }
+        if (fs.fat32) {
+            uint32_t old = r32(fs.fat_cache + index);
+            w32(fs.fat_cache + index, (old & 0xF0000000u) | (value & 0x0FFFFFFFu));
+        } else {
+            w16(fs.fat_cache + index, (uint16_t)value);
+        }
+        if (!sd_write_block(lba, fs.fat_cache)) {
+            return false;
+        }
+    }
+    fs.fat_lba_cached = 0xFFFFFFFFu;
+    return true;
+}
+
+static uint32_t fat_eoc(void) { return fs.fat32 ? 0x0FFFFFFFu : 0xFFFFu; }
+
+static uint32_t fat_alloc(void) {
+    uint32_t limit = fs.clusters + 2u;
+    uint32_t hint = fs.alloc_hint;
+    if (hint < 2u || hint >= limit) {
+        hint = 2u;
+    }
+    for (int pass = 0; pass < 2; pass++) {
+        uint32_t begin = pass == 0 ? hint : 2u;
+        uint32_t end = pass == 0 ? limit : hint;
+        for (uint32_t c = begin; c < end; c++) {
+            uint32_t value = 0;
+            if (!fat_read_entry(c, &value)) {
+                return 0;
+            }
+            if (value == 0) {
+                if (!fat_write_entry(c, fat_eoc())) {
+                    return 0;
+                }
+                fs.alloc_hint = c + 1u;
+                return c;
+            }
+        }
+    }
+    s_err = "SD piena";
+    return 0;
+}
+
+static bool zero_cluster(uint32_t cluster) {
+    memset(rec_sec, 0, sizeof rec_sec);
+    for (uint8_t s = 0; s < fs.spc; s++) {
+        if (!sd_write_block(cluster_lba(cluster) + s, rec_sec)) {
+            return false;
+        }
+    }
+    fs.io_lba = 0xFFFFFFFFu;
+    return true;
+}
+
+static bool dir_scan(uint32_t start_cluster, int fat16_root, const uint8_t sfn[11], scan_t *sc) {
+    memset(sc, 0, sizeof *sc);
+    uint32_t cluster = start_cluster;
+    uint32_t si = 0;
+    for (int guard = 0; guard < 4096; guard++) {
+        uint32_t lba;
+        if (fat16_root) {
+            if (si >= fs.root_sectors) {
+                return true;
+            }
+            lba = fs.root_lba + si;
+        } else {
+            if (cluster < 2u) {
+                return true;
+            }
+            lba = cluster_lba(cluster) + (si % fs.spc);
+            sc->last_cluster = cluster;
+        }
+        if (!sd_read_block(lba, rec_sec)) {
+            return false;
+        }
+        for (uint16_t e = 0; e < 16; e++) {
+            uint8_t *ent = rec_sec + (size_t)e * 32u;
+            if (ent[0] == 0x00 || ent[0] == 0xE5) {
+                if (!sc->free_found) {
+                    sc->free_found = 1;
+                    sc->free_lba = lba;
+                    sc->free_index = e;
+                    sc->free_dir_cluster = fat16_root ? 0 : cluster;
+                }
+                if (ent[0] == 0x00) {
+                    return true;
+                }
+                continue;
+            }
+            if (ent[11] == 0x0F || (ent[11] & 0x08) != 0) {
+                continue;
+            }
+            if (memcmp(ent, sfn, 11) == 0) {
+                sc->found = 1;
+                sc->lba = lba;
+                sc->index = e;
+                sc->dir_cluster = fat16_root ? 0 : cluster;
+                sc->start = (uint32_t)r16(ent + 26) | ((uint32_t)r16(ent + 20) << 16);
+                sc->size = r32(ent + 28);
+                sc->attr = ent[11];
+                return true;
+            }
+        }
+        si++;
+        if (!fat16_root && (si % fs.spc) == 0) {
+            uint32_t next = 0;
+            int step = fat_next(cluster, &next);
+            if (step < 0) {
+                return false;
+            }
+            if (step == 0) {
+                return true;
+            }
+            cluster = next;
+        }
+    }
+    s_err = "cartella";
+    return false;
+}
+
+static void fill_sfn(uint8_t *ent, const uint8_t sfn[11], uint8_t attr, uint32_t cluster, uint32_t size) {
+    memset(ent, 0, 32);
+    memcpy(ent, sfn, 11);
+    ent[11] = attr;
+    w16(ent + 20, (uint16_t)(cluster >> 16));
+    w16(ent + 26, (uint16_t)cluster);
+    w32(ent + 28, size);
+}
+
+static bool extend_dir(scan_t *sc, int fat16_root) {
+    if (fat16_root || sc->last_cluster < 2u) {
+        s_err = "cartella piena";
+        return false;
+    }
+    uint32_t neu = fat_alloc();
+    if (neu == 0) {
+        return false;
+    }
+    if (!zero_cluster(neu) || !fat_write_entry(sc->last_cluster, neu)) {
+        return false;
+    }
+    sc->free_found = 1;
+    sc->free_lba = cluster_lba(neu);
+    sc->free_index = 0;
+    sc->free_dir_cluster = neu;
+    return true;
+}
+
+static bool write_record_bytes(uint32_t cluster, const void *src, uint32_t len) {
+    memset(rec_sec, 0, sizeof rec_sec);
+    if (len > 0 && src) {
+        memcpy(rec_sec, src, len);
+    }
+    if (!sd_write_block(cluster_lba(cluster), rec_sec)) {
+        return false;
+    }
+    fs.io_lba = 0xFFFFFFFFu;
+    return true;
+}
+
+static bool free_tail(uint32_t cluster) {
+    uint32_t next = 0;
+    int step = fat_next(cluster, &next);
+    if (step < 0 || !fat_write_entry(cluster, fat_eoc())) {
+        return false;
+    }
+    for (int guard = 0; step == 1 && guard < 32; guard++) {
+        uint32_t further = 0;
+        uint32_t cur = next;
+        step = fat_next(cur, &further);
+        if (step < 0 || !fat_write_entry(cur, 0)) {
+            return false;
+        }
+        next = further;
+    }
+    return true;
+}
+
+static int ensure_record_dir(uint32_t *out_cluster) {
+    uint8_t sfn[11];
+    scan_t sc;
+    sfn_from_name("RECORD", sfn);
+    if (!dir_scan(fs.fat32 ? fs.root_cluster : 0, !fs.fat32, sfn, &sc)) {
+        return -1;
+    }
+    if (sc.found) {
+        if ((sc.attr & 0x10) == 0 || sc.start < 2u) {
+            s_err = "record";
+            return -1;
+        }
+        *out_cluster = sc.start;
+        return 0;
+    }
+    uint32_t cluster = fat_alloc();
+    if (cluster == 0 || !zero_cluster(cluster)) {
+        return -1;
+    }
+    if (!sd_read_block(cluster_lba(cluster), rec_sec)) {
+        return -1;
+    }
+    uint8_t dot[11];
+    memset(dot, ' ', 11);
+    dot[0] = '.';
+    fill_sfn(rec_sec, dot, 0x10, cluster, 0);
+    dot[1] = '.';
+    fill_sfn(rec_sec + 32, dot, 0x10, fs.fat32 ? fs.root_cluster : 0, 0);
+    if (!sd_write_block(cluster_lba(cluster), rec_sec)) {
+        return -1;
+    }
+    if (!sc.free_found && !extend_dir(&sc, !fs.fat32)) {
+        return -1;
+    }
+    if (!sd_read_block(sc.free_lba, rec_sec)) {
+        return -1;
+    }
+    fill_sfn(rec_sec + (size_t)sc.free_index * 32u, sfn, 0x10, cluster, 0);
+    if (!sd_write_block(sc.free_lba, rec_sec)) {
+        return -1;
+    }
+    *out_cluster = cluster;
+    return 0;
+}
+
+int fat_record_read(const char *name, void *dst, uint32_t cap) {
+    uint8_t sfn[11];
+    uint8_t folder[11];
+    scan_t sc;
+    if (!sfn_from_name(name, sfn) || !dst) {
+        s_err = "nome";
+        return -1;
+    }
+    sfn_from_name("RECORD", folder);
+    if (!dir_scan(fs.fat32 ? fs.root_cluster : 0, !fs.fat32, folder, &sc)) {
+        return -1;
+    }
+    if (!sc.found) {
+        return 0;
+    }
+    if ((sc.attr & 0x10) == 0 || sc.start < 2u) {
+        return -1;
+    }
+    if (!dir_scan(sc.start, 0, sfn, &sc)) {
+        return -1;
+    }
+    if (!sc.found || sc.start < 2u || sc.size == 0) {
+        return 0;
+    }
+    fat_file_t file;
+    uint32_t n = sc.size;
+    if (n > cap) {
+        n = cap;
+    }
+    if (n > 512u) {
+        n = 512u;
+    }
+    if (!fat_file_open(&file, sc.start, sc.size)) {
+        return -1;
+    }
+    return fat_file_read(&file, dst, n);
+}
+
+int fat_record_write(const char *name, const void *src, uint32_t len) {
+    uint8_t sfn[11];
+    scan_t sc;
+    uint32_t dir = 0;
+    uint32_t cluster;
+    if (!sfn_from_name(name, sfn) || len > 512u) {
+        s_err = "nome";
+        return -1;
+    }
+    if (ensure_record_dir(&dir) != 0) {
+        return -1;
+    }
+    if (!dir_scan(dir, 0, sfn, &sc)) {
+        return -1;
+    }
+    if (sc.found && (sc.attr & 0x10) != 0) {
+        s_err = "record";
+        return -1;
+    }
+    cluster = sc.found ? sc.start : 0;
+    if (cluster < 2u) {
+        cluster = fat_alloc();
+        if (cluster == 0) {
+            return -1;
+        }
+    } else if (!free_tail(cluster)) {
+        return -1;
+    }
+    if (!write_record_bytes(cluster, src, len)) {
+        return -1;
+    }
+    if (sc.found) {
+        if (!sd_read_block(sc.lba, rec_sec)) {
+            return -1;
+        }
+        w16(rec_sec + (size_t)sc.index * 32u + 20, (uint16_t)(cluster >> 16));
+        w16(rec_sec + (size_t)sc.index * 32u + 26, (uint16_t)cluster);
+        w32(rec_sec + (size_t)sc.index * 32u + 28, len);
+        if (!sd_write_block(sc.lba, rec_sec)) {
+            return -1;
+        }
+        return 0;
+    }
+    if (!sc.free_found && !extend_dir(&sc, 0)) {
+        return -1;
+    }
+    if (!sd_read_block(sc.free_lba, rec_sec)) {
+        return -1;
+    }
+    fill_sfn(rec_sec + (size_t)sc.free_index * 32u, sfn, 0x20, cluster, len);
+    if (!sd_write_block(sc.free_lba, rec_sec)) {
+        return -1;
+    }
+    return 0;
 }

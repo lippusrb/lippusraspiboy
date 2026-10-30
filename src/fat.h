@@ -44,3 +44,7 @@ bool fat_dir_ok(const fat_dir_t *dir);
 bool fat_file_open(fat_file_t *file, uint32_t cluster, uint32_t size);
 int fat_file_read(fat_file_t *file, void *dst, uint32_t len);
 bool fat_file_seek(fat_file_t *file, uint32_t pos);
+
+/* /record/<nome>, nome 8.3 senza estensione. Vedi sys_record_*. */
+int fat_record_read(const char *name, void *dst, uint32_t cap);
+int fat_record_write(const char *name, const void *src, uint32_t len);
