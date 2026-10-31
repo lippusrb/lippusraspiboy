@@ -696,17 +696,6 @@ def load_png_rgba(path: Path) -> tuple[int, int, list[bytes]]:
     return w, h, rows
 
 
-def sheet_cell(rows: list[bytes], col1: int, row1: int) -> list:
-    c, r = col1 - 1, row1 - 1
-    pix = []
-    for y in range(32):
-        line = rows[r * 32 + y]
-        for x in range(32):
-            o = (c * 32 + x) * 4
-            pix.append(tuple(line[o : o + 4]))
-    return pix
-
-
 def center_in_square(pix: list, src_w: int, src_h: int, dst: int) -> list:
     """Centra il contenuto opaco in un quadrato dst x dst."""
     xs = [x for y in range(src_h) for x in range(src_w) if pix[y * src_w + x][3] >= 128]
@@ -730,9 +719,46 @@ def center_in_square(pix: list, src_w: int, src_h: int, dst: int) -> list:
     return out
 
 
-def prep_cat_cell(pix32: list) -> list:
-    """Cella sheet 32x32 centrata (resta 32x32, dettaglio pieno)."""
-    return center_in_square(pix32, 32, 32, 32)
+def sheet_sprite(rows: list[bytes], sw: int, col1: int, row1: int) -> list:
+    """Gatto intero della cella. Di profilo il muso esce dalla griglia da 32."""
+    c, r = col1 - 1, row1 - 1
+    y0 = r * 32
+    a, b = c * 32, (c + 1) * 32
+
+    def col_ink(x: int) -> bool:
+        if x < 0 or x >= sw:
+            return False
+        for y in range(y0, y0 + 32):
+            if rows[y][x * 4 + 3] >= 128:
+                return True
+        return False
+
+    runs: list[tuple[int, int]] = []
+    x = 0
+    while x < sw:
+        if not col_ink(x):
+            x += 1
+            continue
+        start = x
+        while x < sw and col_ink(x):
+            x += 1
+        runs.append((start, x - 1))
+
+    best_s, best_e, best_ov = a, b - 1, -1
+    for start, end in runs:
+        ov = min(end, b - 1) - max(start, a) + 1
+        if ov > best_ov:
+            best_ov = ov
+            best_s, best_e = start, end
+
+    cw = best_e - best_s + 1
+    pix = []
+    for y in range(32):
+        line = rows[y0 + y]
+        for xx in range(best_s, best_e + 1):
+            o = xx * 4
+            pix.append(tuple(line[o : o + 4]))
+    return center_in_square(pix, cw, 32, 32)
 
 
 def recolor_cat(pix: list, target: tuple[int, int, int], sleep: bool = False) -> list:
@@ -781,7 +807,7 @@ def load_sheet_cats() -> dict[str, list]:
     for dname, row in SHEET_DIRS:
         frames = []
         for col in SHEET_COLS:
-            frames.append(prep_cat_cell(sheet_cell(rows, col, row)))
+            frames.append(sheet_sprite(rows, _w, col, row))
         out[dname] = frames
     return out
 

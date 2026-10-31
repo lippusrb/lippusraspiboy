@@ -354,11 +354,11 @@ static int level_slot(void) {
     return lv - 1;
 }
 
-/* Tile 16: *10 al posto di *5, cosi' a ~80% restano ~4 px/frame. */
+/* Due volte -15%: a 80% sono ~2.9 px/frame, topo e gatti insieme. */
 static int take_pixels(int *acc, int pct) {
-    *acc += pct * 10;
-    int n = *acc / 200;
-    *acc -= n * 200;
+    *acc += pct * 289;
+    int n = *acc / 8000;
+    *acc -= n * 8000;
     if (n > 6) {
         n = 6;
     }
@@ -1546,7 +1546,9 @@ void lippus_main(void) {
                 new_game();
                 draw_world();
             } else {
-                if (++g_attract_t >= 420) {
+                /* Anteprima ~14 s, classifica ~3 s. */
+                int hold = g_attract_page == 1 ? 90 : 420;
+                if (++g_attract_t >= hold) {
                     g_attract_t = 0;
                     g_attract_page ^= 1;
                 }
