@@ -1,4 +1,5 @@
 #include "lippus.h"
+#include "arkanoid_font.h"
 
 /* Vetrata in orizzontale. La spatola guida una perla di vetro:
    le tessere si staccano, il piombo resta. Le gocce di pigmento
@@ -14,7 +15,8 @@
 #define PITCH_X 26
 #define PITCH_Y 12
 #define ORIGIN_X 4
-#define ORIGIN_Y 24
+#define HUD_H 22
+#define ORIGIN_Y 30
 #define BALL_R 3
 #define BALLS 3
 #define DROPS 4
@@ -24,11 +26,12 @@
 #define PAD_Y 214
 #define MIN_X (4 + BALL_R)
 #define MAX_X (LIPPUS_SCREEN_W - 4 - BALL_R)
-#define MIN_Y (20 + BALL_R)
+#define MIN_Y (HUD_H + BALL_R)
 #define RECORD_NAME "BREAKER"
 #define SCORE_N 20
 #define LEVELS 20
 #define ATTRACT_LEN 420
+#define ATTRACT_SCORE_LEN 150
 #define SPEED_CAP 7
 #define SPEED_WAIT 300
 
@@ -356,9 +359,69 @@ static void write_u(char *dst, int *used, unsigned value) {
     }
 }
 
+static int arkanoid_width(const char *text, int scale) {
+    int width = 0;
+    int i;
+    if (!text) {
+        return 0;
+    }
+    if (scale < 1) {
+        scale = 1;
+    }
+    for (i = 0; text[i] && text[i] != '\n'; i++) {
+        unsigned char code = (unsigned char)text[i];
+        if (code < 32 || code > 126) {
+            continue;
+        }
+        width += arkanoid_font[code - 32].adv * scale;
+    }
+    return width;
+}
+
+static void arkanoid_text(int x, int y, const char *text, uint16_t color, int scale) {
+    int origin;
+    int line;
+    int i;
+    if (!text || scale < 1) {
+        return;
+    }
+    if (scale > 3) {
+        scale = 3;
+    }
+    origin = x;
+    line = y;
+    for (i = 0; text[i]; i++) {
+        unsigned char code = (unsigned char)text[i];
+        const arkanoid_glyph_t *glyph;
+        int top;
+        int row;
+        if (code == '\n') {
+            x = origin;
+            line += ARKAN_LH * scale;
+            continue;
+        }
+        if (code < 32 || code > 126) {
+            continue;
+        }
+        glyph = &arkanoid_font[code - 32];
+        top = line + (ARKAN_ASCENT - glyph->top) * scale;
+        for (row = 0; row < glyph->h; row++) {
+            uint32_t bits = arkanoid_rows[glyph->row + row];
+            int col;
+            for (col = 0; col < glyph->w; col++) {
+                if (bits & (1u << col)) {
+                    gfx_fill_rect(x + (glyph->bearing + col) * scale, top + row * scale, scale,
+                                  scale, color);
+                }
+            }
+        }
+        x += glyph->adv * scale;
+    }
+}
+
 static void text_center(int y, const char *s, uint16_t color, int scale) {
-    int x = (LIPPUS_SCREEN_W - gfx_text_width(s, scale)) / 2;
-    gfx_text(x, y, s, color, scale);
+    int x = (LIPPUS_SCREEN_W - arkanoid_width(s, scale)) / 2;
+    arkanoid_text(x, y, s, color, scale);
 }
 
 static int pressed_go(const lippus_pad_t *pad) {
@@ -1303,35 +1366,48 @@ static void draw_hud(void) {
     char num[12];
     char lv[12];
     int used = 0;
-    int pip = 188;
-    gfx_fill_rect(0, 0, LIPPUS_SCREEN_W, 16, COL_HUD);
-    gfx_text(6, 4, "BREAKER", LIPPUS_AMBER, 1);
-    write_u(num, &used, (unsigned)g_score);
-    num[used] = 0;
-    gfx_text(78, 4, num, LIPPUS_CREAM, 1);
-    used = 0;
-    lv[used++] = 'L';
-    lv[used++] = 'V';
-    write_u(lv, &used, (unsigned)g_level);
-    lv[used] = 0;
-    gfx_text(148, 4, lv, LIPPUS_CREAM, 1);
+    int right = LIPPUS_SCREEN_W - 4;
+    int pips = (g_wide ? 1 : 0) + (g_slow ? 1 : 0) + (g_chisel ? 1 : 0);
+    int pip;
+    gfx_fill_rect(0, 0, LIPPUS_SCREEN_W, HUD_H, COL_HUD);
+    if (g_lives > 0) {
+        int i;
+        int x0 = right - g_lives * 8 + 4;
+        for (i = 0; i < g_lives; i++) {
+            gfx_fill_circle(x0 + i * 8, 8, 3, LIPPUS_RGB(220, 72, 96));
+        }
+        right = x0 - 6;
+    }
+    pip = right - pips * 10;
     if (g_wide) {
         gfx_fill_rect(pip, 5, 8, 6, COL_WIDE);
-        pip += 12;
+        pip += 10;
     }
     if (g_slow) {
         gfx_fill_rect(pip, 5, 8, 6, COL_TEAL);
-        pip += 12;
+        pip += 10;
     }
     if (g_chisel) {
         gfx_fill_rect(pip, 5, 8, 6, COL_CHISEL);
     }
-    if (g_lives > 0) {
-        int i;
-        int x0 = LIPPUS_SCREEN_W - 8 - g_lives * 10;
-        for (i = 0; i < g_lives; i++) {
-            gfx_fill_circle(x0 + i * 10, 8, 3, LIPPUS_RGB(220, 72, 96));
-        }
+    if (pips > 0) {
+        right -= pips * 10 + 4;
+    }
+    lv[used++] = 'L';
+    lv[used++] = 'V';
+    lv[used++] = ' ';
+    write_u(lv, &used, (unsigned)g_level);
+    lv[used] = 0;
+    right -= arkanoid_width(lv, 1);
+    arkanoid_text(right, 1, lv, LIPPUS_CREAM, 1);
+    used = 0;
+    write_u(num, &used, (unsigned)g_score);
+    num[used] = 0;
+    if (4 + arkanoid_width("BREAKER", 1) + 6 + arkanoid_width(num, 1) < right - 4) {
+        arkanoid_text(4, 1, "BREAKER", LIPPUS_AMBER, 1);
+        arkanoid_text(4 + arkanoid_width("BREAKER", 1) + 6, 1, num, LIPPUS_CREAM, 1);
+    } else {
+        arkanoid_text(4, 1, num, LIPPUS_CREAM, 1);
     }
 }
 
@@ -1356,10 +1432,10 @@ static void draw_world(void) {
             draw_tile(x, y, g_kind[r][c], g_hp[r][c]);
         }
     }
-    gfx_fill_rect(0, 16, LIPPUS_SCREEN_W, 4, COL_LEAD);
-    gfx_fill_rect(0, 16, 4, LIPPUS_SCREEN_H - 16, COL_LEAD);
-    gfx_fill_rect(LIPPUS_SCREEN_W - 4, 16, 4, LIPPUS_SCREEN_H - 16, COL_LEAD);
-    gfx_fill_rect(0, 16, LIPPUS_SCREEN_W, 1, COL_LEAD_HI);
+    gfx_fill_rect(0, HUD_H, LIPPUS_SCREEN_W, 4, COL_LEAD);
+    gfx_fill_rect(0, HUD_H, 4, LIPPUS_SCREEN_H - HUD_H, COL_LEAD);
+    gfx_fill_rect(LIPPUS_SCREEN_W - 4, HUD_H, 4, LIPPUS_SCREEN_H - HUD_H, COL_LEAD);
+    gfx_fill_rect(0, HUD_H, LIPPUS_SCREEN_W, 1, COL_LEAD_HI);
     for (i = 0; i < DROPS; i++) {
         if (!g_drop_on[i]) {
             continue;
@@ -1379,16 +1455,16 @@ static void draw_world(void) {
 static void draw_banner(void) {
     char label[20];
     if (g_missed && g_state != ST_CLEAR) {
-        text_center(136, "OH NO!", LIPPUS_RGB(220, 72, 96), 1);
+        text_center(132, "OH NO!", LIPPUS_RGB(220, 72, 96), 1);
     } else {
         level_label(label);
-        text_center(136, label, LIPPUS_AMBER, 1);
+        text_center(132, label, LIPPUS_AMBER, 1);
     }
     if (g_state == ST_READY && (g_frame & 16) == 0) {
-        text_center(152, "PRESS A", LIPPUS_CREAM, 1);
+        text_center(156, "PRESS A", LIPPUS_CREAM, 1);
     }
     if (g_state == ST_CLEAR) {
-        text_center(152, "CLEARED", LIPPUS_CREAM, 1);
+        text_center(156, "CLEARED", LIPPUS_CREAM, 1);
     }
 }
 
@@ -1399,14 +1475,14 @@ static void draw_drop_at(int x, int y, int kind) {
 
 static void draw_press_start(void) {
     if ((g_frame & 16) == 0) {
-        text_center(LIPPUS_SCREEN_H - 16, "PRESS START", LIPPUS_YELLOW, 1);
+        text_center(LIPPUS_SCREEN_H - ARKAN_LH, "PRESS START", LIPPUS_YELLOW, 1);
     }
 }
 
 static void draw_demo(void) {
     int t = g_attract_t;
     const char *caption = "SLIDE THE KNIFE";
-    text_center(4, "LIPPUS BREAKER", LIPPUS_AMBER, 2);
+    text_center(2, "LIPPUS BREAKER", LIPPUS_AMBER, 1);
     if (t < 105) {
         int swing = t % 70;
         int kx = 70 + (swing < 35 ? swing * 4 : (70 - swing) * 4);
@@ -1489,7 +1565,7 @@ static void draw_demo(void) {
             if (i != which) {
                 draw_drop_at(x, 78, kinds[i]);
             }
-            gfx_text(x - 12, 96, labels[i], color, 1);
+            arkanoid_text(x - arkanoid_width(labels[i], 1) / 2, 96, labels[i], color, 1);
         }
         if (fall > 70) {
             fall = 70;
@@ -1504,7 +1580,7 @@ static void draw_demo(void) {
     text_center(196, caption, LIPPUS_CREAM, 1);
 }
 
-static void draw_score_row(int y, int rank, const score_t *row, uint16_t color) {
+static void draw_score_row(int x, int y, int rank, const score_t *row, uint16_t color) {
     char pos[4];
     char name[4];
     char num[8];
@@ -1514,9 +1590,9 @@ static void draw_score_row(int y, int rank, const score_t *row, uint16_t color) 
     name[2] = row->name[2];
     name[3] = 0;
     format_u(num, (unsigned)row->score);
-    gfx_text(88 - gfx_text_width(pos, 1), y, pos, color, 1);
-    gfx_text(104, y, name, color, 1);
-    gfx_text(236 - gfx_text_width(num, 1), y, num, color, 1);
+    arkanoid_text(x, y, pos, color, 1);
+    arkanoid_text(x + 34, y, name, color, 1);
+    arkanoid_text(x + 152 - arkanoid_width(num, 1), y, num, color, 1);
 }
 
 static void draw_scores(void) {
@@ -1528,7 +1604,9 @@ static void draw_scores(void) {
     }
     for (i = 0; i < g_score_n; i++) {
         uint16_t color = (i == g_rank) ? LIPPUS_YELLOW : LIPPUS_CREAM;
-        draw_score_row(16 + i * 10, i, &g_scores[i], color);
+        int col = i / 10;
+        int row = i % 10;
+        draw_score_row(2 + col * 160, 22 + row * 19, i, &g_scores[i], color);
     }
 }
 
@@ -1547,30 +1625,38 @@ static void draw_name(void) {
     char num[8];
     format_u(num, (unsigned)g_score);
     gfx_clear(COL_NIGHT);
-    text_center(28, "NEW HIGH SCORE", LIPPUS_AMBER, 1);
-    text_center(46, num, LIPPUS_CREAM, 2);
-    text_center(78, "YOUR NAME", LIPPUS_CREAM, 1);
+    text_center(8, "NEW HIGH SCORE", LIPPUS_AMBER, 1);
+    text_center(36, num, LIPPUS_CREAM, 1);
+    text_center(64, "YOUR NAME", LIPPUS_CREAM, 1);
     shown[0] = g_initials[0];
     shown[1] = g_initials[1];
     shown[2] = g_initials[2];
     shown[3] = 0;
-    text_center(104, shown, LIPPUS_YELLOW, 3);
+    text_center(96, shown, LIPPUS_YELLOW, 1);
     if ((g_frame & 8) == 0) {
-        int x = (LIPPUS_SCREEN_W - gfx_text_width(shown, 3)) / 2 + g_name_i * 24;
-        gfx_fill_rect(x, 132, 20, 3, LIPPUS_YELLOW);
+        char one[2];
+        int x = (LIPPUS_SCREEN_W - arkanoid_width(shown, 1)) / 2;
+        int i;
+        one[1] = 0;
+        for (i = 0; i < g_name_i; i++) {
+            one[0] = shown[i];
+            x += arkanoid_width(one, 1);
+        }
+        one[0] = shown[g_name_i];
+        gfx_fill_rect(x, 118, arkanoid_width(one, 1), 3, LIPPUS_YELLOW);
     }
-    text_center(168, "UP DOWN", LIPPUS_CREAM, 1);
-    text_center(184, "LEFT RIGHT", LIPPUS_CREAM, 1);
-    text_center(200, "START ENTERS", LIPPUS_CREAM, 1);
+    text_center(148, "UP DOWN", LIPPUS_CREAM, 1);
+    text_center(172, "LEFT RIGHT", LIPPUS_CREAM, 1);
+    text_center(196, "START ENTERS", LIPPUS_CREAM, 1);
 }
 
 static void draw_game_over(void) {
     char num[8];
     format_u(num, (unsigned)g_score);
-    gfx_fill_rect(46, 92, 228, 52, COL_BOX);
-    gfx_rect(46, 92, 228, 52, LIPPUS_AMBER);
-    text_center(100, "GAME OVER", LIPPUS_AMBER, 2);
-    text_center(124, num, LIPPUS_CREAM, 1);
+    gfx_fill_rect(40, 88, 240, 64, COL_BOX);
+    gfx_rect(40, 88, 240, 64, LIPPUS_AMBER);
+    text_center(96, "GAME OVER", LIPPUS_AMBER, 1);
+    text_center(120, num, LIPPUS_CREAM, 1);
 }
 
 static void tick_name(const lippus_pad_t *pad) {
@@ -1659,7 +1745,8 @@ void lippus_main(void) {
                 g_rank = -1;
                 new_game();
             } else {
-                if (++g_attract_t >= ATTRACT_LEN) {
+                int attract_len = (g_attract_page == 0) ? ATTRACT_LEN : ATTRACT_SCORE_LEN;
+                if (++g_attract_t >= attract_len) {
                     g_attract_t = 0;
                     g_attract_page ^= 1;
                 }
