@@ -1,5 +1,6 @@
 #include "lippus.h"
 #include "title.h"
+#include "court_font.h"
 
 /* Landscape court. Tennis points, first to 3 games.
    One lost game ends the match. Start runs it from the attract mode. */
@@ -7,15 +8,18 @@
 #define PAD_W 6
 #define PAD_H 42
 #define BALL_R 3
-#define FIELD_TOP 36
+#define FIELD_TOP (COURT_SM_H * 2 + 10)
 #define MARGIN 14
 #define PLAYER_X MARGIN
 #define CPU_X (LIPPUS_SCREEN_W - MARGIN - PAD_W)
 #define SCORE_N 20
 #define RECORD_NAME "BOUNCE"
 #define ATTRACT_LEN 500
-#define DEMO_TOP (TITLE_H + 14)
-#define DEMO_BOT 188
+#define SCORE_LEN 80
+#define TITLE_SKY 14
+#define CAPTION_Y (LIPPUS_SCREEN_H - COURT_SM_H * 2 - 8)
+#define DEMO_TOP (TITLE_SKY + TITLE_H + COURT_SM_H + 6)
+#define DEMO_BOT (CAPTION_Y - 8)
 
 #define ST_ATTRACT 0
 #define ST_NAME 1
@@ -25,12 +29,10 @@
 #define ST_GAME 5
 #define ST_OVER 6
 
-#define COL_COURT LIPPUS_RGB(8, 14, 26)
 #define COL_GRASS LIPPUS_RGB(24, 76, 40)
-#define COL_HUD LIPPUS_RGB(14, 18, 34)
-#define COL_LINE LIPPUS_RGB(36, 64, 84)
+#define COL_BAND LIPPUS_RGB(14, 46, 24)
+#define COL_LINE LIPPUS_RGB(232, 220, 196)
 #define COL_CPU LIPPUS_RGB(72, 206, 186)
-#define COL_BOX LIPPUS_RGB(12, 16, 32)
 
 static const lippus_note_t g_win_notes[] = {
     {523, 90}, {659, 90}, {784, 160}, {1046, 240},
@@ -99,13 +101,109 @@ static void format_u(char *dst, unsigned value) {
     dst[used] = 0;
 }
 
-static void text_center(int y, const char *s, uint16_t color, int scale) {
-    int x = (LIPPUS_SCREEN_W - gfx_text_width(s, scale)) / 2;
-    gfx_text(x, y, s, color, scale);
+static const court_glyph_t *court_glyph(int size, char ch) {
+    const court_glyph_t *tab = size == COURT_LG ? k_court_lg : k_court_sm;
+    int i = 37;
+    if (ch >= 'A' && ch <= 'Z') {
+        i = ch - 'A';
+    } else if (ch >= '0' && ch <= '9') {
+        i = 26 + (ch - '0');
+    } else if (ch == ',') {
+        i = 36;
+    }
+    return &tab[i];
 }
 
-static void text_right(int y, const char *s, uint16_t color) {
-    gfx_text(LIPPUS_SCREEN_W - 8 - gfx_text_width(s, 1), y, s, color, 1);
+static const uint8_t *court_px(int size) {
+    return size == COURT_LG ? k_court_lg_px : k_court_sm_px;
+}
+
+static void court_mix(int x, int y, int a, uint16_t color, uint16_t bg) {
+    int cr;
+    int cg;
+    int cb;
+    int br;
+    int bgc;
+    int bb;
+    if (a < 8) {
+        return;
+    }
+    if ((unsigned)x >= (unsigned)LIPPUS_SCREEN_W || (unsigned)y >= (unsigned)LIPPUS_SCREEN_H) {
+        return;
+    }
+    if (a >= 248) {
+        gfx_pixel(x, y, color);
+        return;
+    }
+    cr = (color >> 11) << 3;
+    cg = ((color >> 5) & 63) << 2;
+    cb = (color & 31) << 3;
+    br = (bg >> 11) << 3;
+    bgc = ((bg >> 5) & 63) << 2;
+    bb = (bg & 31) << 3;
+    gfx_pixel(x, y, LIPPUS_RGB((br * (255 - a) + cr * a) / 255,
+                               (bgc * (255 - a) + cg * a) / 255,
+                               (bb * (255 - a) + cb * a) / 255));
+}
+
+static void court_edges(const char *s, int size, int *lo, int *hi) {
+    int x = 0;
+    int any = 0;
+    int minx = 0;
+    int maxx = 0;
+    for (; *s; s++) {
+        const court_glyph_t *g = court_glyph(size, *s);
+        if (g->w) {
+            int left = x + g->dx;
+            int right = left + g->w;
+            if (!any || left < minx) {
+                minx = left;
+            }
+            if (!any || right > maxx) {
+                maxx = right;
+            }
+            any = 1;
+        }
+        x += g->adv;
+    }
+    if (!any) {
+        *lo = 0;
+        *hi = x;
+        return;
+    }
+    *lo = minx;
+    *hi = maxx;
+}
+
+static void court_text(int x, int y, const char *s, uint16_t color, int size, uint16_t bg) {
+    const uint8_t *px = court_px(size);
+    for (; *s; s++) {
+        const court_glyph_t *g = court_glyph(size, *s);
+        const uint8_t *src = px + g->off;
+        int row;
+        int col;
+        for (row = 0; row < g->h; row++) {
+            for (col = 0; col < g->w; col++) {
+                court_mix(x + g->dx + col, y + g->dy + row, src[row * g->w + col], color, bg);
+            }
+        }
+        x += g->adv;
+    }
+}
+
+static void court_center(int y, const char *s, uint16_t color, int size, uint16_t bg) {
+    int lo;
+    int hi;
+    court_edges(s, size, &lo, &hi);
+    court_text((LIPPUS_SCREEN_W - (hi - lo)) / 2 - lo, y, s, color, size, bg);
+}
+
+static void court_right(int right, int y, const char *s, uint16_t color, int size, uint16_t bg) {
+    int lo;
+    int hi;
+    court_edges(s, size, &lo, &hi);
+    (void)lo;
+    court_text(right - hi, y, s, color, size, bg);
 }
 
 static int board_score(void) {
@@ -473,6 +571,10 @@ static void draw_paddles(int py, int cy) {
     gfx_fill_rect(CPU_X, cy + 2, 2, PAD_H - 4, LIPPUS_WHITE);
 }
 
+static void draw_ball(int cx, int cy) {
+    gfx_blit(cx - BALL_W / 2, cy - BALL_H / 2, BALL_W, BALL_H, k_ball, 1, TITLE_BALL_KEY);
+}
+
 static void draw_marks(int top, int bot) {
     int y;
     gfx_fill_rect(0, top, LIPPUS_SCREEN_W, 2, COL_LINE);
@@ -489,31 +591,31 @@ static void draw_hud(void) {
     uint16_t pc = (g_flash && g_last_player) ? LIPPUS_WHITE : LIPPUS_AMBER;
     uint16_t cc = (g_flash && !g_last_player) ? LIPPUS_WHITE : COL_CPU;
     format_u(num, (unsigned)board_score());
-    gfx_text(8, 4, "YOU", LIPPUS_AMBER, 1);
-    gfx_text(8, 18, lp, pc, 1);
-    text_center(4, num, LIPPUS_CREAM, 1);
-    draw_pips((LIPPUS_SCREEN_W - 42) / 2, 18, g_pg);
-    text_right(4, "CPU", COL_CPU);
-    text_right(18, rp, cc);
+    court_text(8, 4, "YOU", LIPPUS_AMBER, COURT_SM, COL_GRASS);
+    court_text(8, 6 + COURT_SM_H, lp, pc, COURT_SM, COL_GRASS);
+    court_center(4, num, LIPPUS_CREAM, COURT_SM, COL_GRASS);
+    draw_pips((LIPPUS_SCREEN_W - 42) / 2, 6 + COURT_SM_H + (COURT_SM_H - 8) / 2, g_pg);
+    court_right(LIPPUS_SCREEN_W - 8, 4, "CPU", COL_CPU, COURT_SM, COL_GRASS);
+    court_right(LIPPUS_SCREEN_W - 8, 6 + COURT_SM_H, rp, cc, COURT_SM, COL_GRASS);
 }
 
 static void draw_court(void) {
-    gfx_clear(COL_COURT);
-    gfx_fill_rect(0, 0, LIPPUS_SCREEN_W, FIELD_TOP, COL_HUD);
+    gfx_clear(COL_GRASS);
     draw_marks(FIELD_TOP - 2, LIPPUS_SCREEN_H);
     draw_hud();
     draw_paddles(g_py, g_cy);
-    gfx_fill_circle(g_bx, g_by, BALL_R, LIPPUS_WHITE);
+    draw_ball(g_bx, g_by);
 }
 
 static void draw_banner(const char *title, const char *sub, uint16_t color) {
-    int w = 240;
+    int w = 250;
+    int h = COURT_LG_H + COURT_SM_H + 28;
     int x = (LIPPUS_SCREEN_W - w) / 2;
-    int y = 82;
-    gfx_fill_rect(x, y, w, 68, COL_BOX);
-    gfx_rect(x, y, w, 68, color);
-    text_center(y + 10, title, color, 2);
-    text_center(y + 40, sub, LIPPUS_CREAM, 1);
+    int y = FIELD_TOP + 24;
+    gfx_fill_rect(x, y, w, h, COL_BAND);
+    gfx_rect(x, y, w, h, color);
+    court_center(y + 10, title, color, COURT_LG, COL_BAND);
+    court_center(y + 16 + COURT_LG_H, sub, LIPPUS_CREAM, COURT_SM, COL_BAND);
 }
 
 static void draw_match(void) {
@@ -543,7 +645,7 @@ static void draw_match(void) {
         } else if (g_adv == 2) {
             call = "ADVANTAGE CPU";
         }
-        text_center(FIELD_TOP + 8, call, LIPPUS_CREAM, 1);
+        court_center(FIELD_TOP + 8, call, LIPPUS_CREAM, COURT_LG, COL_GRASS);
     }
 }
 
@@ -665,37 +767,36 @@ static void draw_score_row(int x, int right, int y, int rank, const score_t *row
     char pos[4];
     char name[4];
     char num[8];
-    int pos_w;
     format_u(pos, (unsigned)(rank + 1));
     name[0] = row->name[0];
     name[1] = row->name[1];
     name[2] = row->name[2];
     name[3] = 0;
     format_u(num, (unsigned)row->score);
-    pos_w = gfx_text_width(pos, 1);
-    gfx_text(x + 16 - pos_w, y, pos, color, 1);
-    gfx_text(x + 24, y, name, color, 1);
-    gfx_text(right - gfx_text_width(num, 1), y, num, color, 1);
+    court_right(x + 22, y, pos, color, COURT_SM, COL_GRASS);
+    court_text(x + 28, y, name, color, COURT_SM, COL_GRASS);
+    court_right(right, y, num, color, COURT_SM, COL_GRASS);
 }
 
 static void draw_scores(void) {
     int i;
-    text_center(4, "TOP 20", LIPPUS_AMBER, 2);
+    int top = 6 + COURT_LG_H + 6;
+    court_center(6, "TOP 20", LIPPUS_AMBER, COURT_LG, COL_GRASS);
     if (g_score_n == 0) {
-        text_center(108, "NO SCORES YET", LIPPUS_CREAM, 1);
+        court_center(108, "NO SCORES YET", LIPPUS_CREAM, COURT_SM, COL_GRASS);
         return;
     }
     for (i = 0; i < g_score_n; i++) {
         int col = i / 10;
         int row = i % 10;
         uint16_t color = (i == g_rank) ? LIPPUS_YELLOW : LIPPUS_CREAM;
-        draw_score_row(col ? 172 : 8, col ? 312 : 148, 28 + row * 18, i, &g_scores[i], color);
+        draw_score_row(col ? 168 : 8, col ? 312 : 156, top + row * (COURT_SM_H + 2), i, &g_scores[i], color);
     }
 }
 
 static void draw_press_start(void) {
     if ((g_frame & 16) == 0) {
-        text_center(LIPPUS_SCREEN_H - 16, "PRESS START", LIPPUS_YELLOW, 1);
+        court_center(LIPPUS_SCREEN_H - COURT_SM_H - 4, "PRESS START", LIPPUS_YELLOW, COURT_SM, COL_GRASS);
     }
 }
 
@@ -724,14 +825,50 @@ static void draw_demo_court(int py, int cy, int bx, int by, int ball) {
     py = clamp_i(py, DEMO_TOP + 2, DEMO_TOP + 2 + span);
     cy = clamp_i(cy, DEMO_TOP + 2, DEMO_TOP + 2 + span);
     draw_marks(DEMO_TOP, DEMO_BOT);
-    gfx_text(8, DEMO_TOP - 12, "YOU", LIPPUS_AMBER, 1);
-    text_right(DEMO_TOP - 12, "CPU", COL_CPU);
+    court_text(8, DEMO_TOP - COURT_SM_H - 2, "YOU", LIPPUS_AMBER, COURT_SM, COL_GRASS);
+    court_right(LIPPUS_SCREEN_W - 8, DEMO_TOP - COURT_SM_H - 2, "CPU", COL_CPU, COURT_SM, COL_GRASS);
     draw_paddles(py, cy);
     if (ball) {
         bx = clamp_i(bx, BALL_R + 2, LIPPUS_SCREEN_W - BALL_R - 2);
         by = clamp_i(by, DEMO_TOP + BALL_R, DEMO_BOT - BALL_R);
-        gfx_fill_circle(bx, by, BALL_R, LIPPUS_WHITE);
+        draw_ball(bx, by);
     }
+}
+
+/* The ball comes in from the left, clears the name, drops into
+   the gap after the last letter, and settles with one bounce. */
+static void draw_title_ball(int t) {
+    const int rise = 10;
+    const int cross = 24;
+    const int drop = 12;
+    const int settle = 10;
+    int x;
+    int y;
+    int peak = TITLE_BALL_Y - TITLE_ARC;
+    int left = TITLE_INK_L - BALL_W;
+
+    if (t >= rise + cross + drop + settle) {
+        x = TITLE_BALL_X;
+        y = TITLE_BALL_Y;
+    } else if (t < rise) {
+        x = -BALL_W + (left + BALL_W) * t / rise;
+        y = TITLE_BALL_Y + (peak - TITLE_BALL_Y) * t / rise;
+    } else if (t < rise + cross) {
+        int u = t - rise;
+        x = left + (TITLE_BALL_X - left) * u / cross;
+        y = peak;
+    } else if (t < rise + cross + drop) {
+        int u = t - rise - cross;
+        int remain = drop - u;
+        x = TITLE_BALL_X;
+        y = TITLE_BALL_Y + (peak - TITLE_BALL_Y) * remain * remain / (drop * drop);
+    } else {
+        int u = t - rise - cross - drop;
+        int lift = 5 * 4 * u * (settle - u) / (settle * settle);
+        x = TITLE_BALL_X;
+        y = TITLE_BALL_Y - lift;
+    }
+    gfx_blit(x, y + TITLE_SKY, BALL_W, BALL_H, k_ball, 1, TITLE_BALL_KEY);
 }
 
 static void draw_demo(void) {
@@ -743,7 +880,8 @@ static void draw_demo(void) {
     if (scene > 4) {
         scene = 4;
     }
-    gfx_blit(0, 0, TITLE_W, TITLE_H, k_title, 0, 0);
+    gfx_blit(0, TITLE_SKY, TITLE_W, TITLE_H, k_title, 0, 0);
+    draw_title_ball(g_attract_t);
     if (scene == 0) {
         draw_demo_court(DEMO_TOP + 4 + wave(u, 80, span), mid, 0, 0, 0);
     } else if (scene == 1) {
@@ -786,11 +924,11 @@ static void draw_demo(void) {
         if (u >= 80) {
             you = "AD";
             cpu = "40";
-            text_center(64, "ADVANTAGE", LIPPUS_CREAM, 1);
+            court_center(70, "ADVANTAGE", LIPPUS_CREAM, COURT_LG, COL_GRASS);
         } else if (u >= 64) {
             you = "40";
             cpu = "40";
-            text_center(64, "DEUCE", LIPPUS_CREAM, 1);
+            court_center(70, "DEUCE", LIPPUS_CREAM, COURT_LG, COL_GRASS);
         } else if (u >= 48) {
             you = "40";
         } else if (u >= 32) {
@@ -798,20 +936,20 @@ static void draw_demo(void) {
         } else if (u >= 16) {
             you = "15";
         }
-        gfx_text(48, 96, "YOU", LIPPUS_AMBER, 2);
-        gfx_text(48, 120, you, LIPPUS_AMBER, 2);
-        gfx_text(196, 96, "CPU", COL_CPU, 2);
-        gfx_text(196, 120, cpu, COL_CPU, 2);
+        court_text(48, 108, "YOU", LIPPUS_AMBER, COURT_LG, COL_GRASS);
+        court_text(48, 112 + COURT_LG_H, you, LIPPUS_AMBER, COURT_LG, COL_GRASS);
+        court_text(196, 108, "CPU", COL_CPU, COURT_LG, COL_GRASS);
+        court_text(196, 112 + COURT_LG_H, cpu, COL_CPU, COURT_LG, COL_GRASS);
     } else {
         int got = u / 28;
         caption = "ONE LOST GAME ENDS THE MATCH";
         if (got > 3) {
             got = 3;
         }
-        text_center(72, "WIN 3 GAMES", LIPPUS_AMBER, 2);
-        draw_pips((LIPPUS_SCREEN_W - 42) / 2, 108, got);
+        court_center(84, "WIN 3 GAMES", LIPPUS_AMBER, COURT_LG, COL_GRASS);
+        draw_pips((LIPPUS_SCREEN_W - 42) / 2, 84 + COURT_LG_H + 8, got);
     }
-    text_center(200, caption, LIPPUS_CREAM, 1);
+    court_center(CAPTION_Y, caption, LIPPUS_CREAM, COURT_SM, COL_GRASS);
 }
 
 static void draw_attract(void) {
@@ -827,23 +965,40 @@ static void draw_attract(void) {
 static void draw_name(void) {
     char shown[4];
     char num[8];
+    int y = 22;
+    int init_y;
+    int lo;
+    int hi;
+    int pen;
     format_u(num, (unsigned)board_score());
-    gfx_clear(COL_COURT);
-    text_center(28, "NEW HIGH SCORE", LIPPUS_AMBER, 1);
-    text_center(46, num, LIPPUS_CREAM, 2);
-    text_center(78, "YOUR NAME", LIPPUS_CREAM, 1);
+    gfx_clear(COL_GRASS);
+    court_center(y, "NEW HIGH SCORE", LIPPUS_AMBER, COURT_LG, COL_GRASS);
+    y += COURT_LG_H + 4;
+    court_center(y, num, LIPPUS_CREAM, COURT_LG, COL_GRASS);
+    y += COURT_LG_H + 14;
+    court_center(y, "YOUR NAME", LIPPUS_CREAM, COURT_SM, COL_GRASS);
+    init_y = y + COURT_SM_H + 8;
     shown[0] = g_initials[0];
     shown[1] = g_initials[1];
     shown[2] = g_initials[2];
     shown[3] = 0;
-    text_center(104, shown, LIPPUS_YELLOW, 3);
+    court_edges(shown, COURT_LG, &lo, &hi);
+    pen = (LIPPUS_SCREEN_W - (hi - lo)) / 2 - lo;
+    court_text(pen, init_y, shown, LIPPUS_YELLOW, COURT_LG, COL_GRASS);
     if ((g_frame & 8) == 0) {
-        int x = (LIPPUS_SCREEN_W - gfx_text_width(shown, 3)) / 2 + g_name_i * 24;
-        gfx_fill_rect(x, 132, 20, 3, LIPPUS_YELLOW);
+        int i;
+        int at = pen;
+        const court_glyph_t *g;
+        for (i = 0; i < g_name_i; i++) {
+            at += court_glyph(COURT_LG, shown[i])->adv;
+        }
+        g = court_glyph(COURT_LG, shown[g_name_i]);
+        gfx_fill_rect(at + g->dx, init_y + COURT_LG_H - 3, g->w > 0 ? g->w : g->adv, 2, LIPPUS_YELLOW);
     }
-    text_center(164, "UP DOWN", LIPPUS_CREAM, 1);
-    text_center(180, "LEFT RIGHT", LIPPUS_CREAM, 1);
-    text_center(196, "START ENTERS", LIPPUS_CREAM, 1);
+    y = init_y + COURT_LG_H + 16;
+    court_center(y, "UP DOWN", LIPPUS_CREAM, COURT_SM, COL_GRASS);
+    court_center(y + COURT_SM_H + 3, "LEFT RIGHT", LIPPUS_CREAM, COURT_SM, COL_GRASS);
+    court_center(y + (COURT_SM_H + 3) * 2, "START ENTERS", LIPPUS_CREAM, COURT_SM, COL_GRASS);
 }
 
 static void tick_name(const lippus_pad_t *pad) {
@@ -940,9 +1095,14 @@ void lippus_main(void) {
                 g_rank = -1;
                 new_game();
             } else {
-                if (++g_attract_t >= ATTRACT_LEN) {
+                if (g_attract_page == 0) {
+                    if (++g_attract_t >= ATTRACT_LEN) {
+                        g_attract_t = 0;
+                        g_attract_page = 1;
+                    }
+                } else if (++g_attract_t >= SCORE_LEN) {
                     g_attract_t = 0;
-                    g_attract_page ^= 1;
+                    g_attract_page = 0;
                 }
                 draw_attract();
             }
