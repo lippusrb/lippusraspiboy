@@ -9,7 +9,8 @@
    Select breve cambia arma, Select lungo l'inventario, Start il menu.
    Otto slot in record/INCSAV0..7. Abort e la morte non li cancellano.
    Il sintetizzatore a campioni dei file audio non gira qui: il firmware
-   ha quattro voci, e ogni effetto usa quelle. */
+   ha quattro voci, e ogni effetto usa quelle. La musica e' un snd_tune
+   in loop sulla voce 1. */
 
 #define FRAME 33
 #define MAP 8
@@ -450,6 +451,200 @@ static void load_disk(void) {
     read_slots();
 }
 
+/* Musica di sottofondo su una voce. Lo spartito a tre canali (basso
+   triangolo, arpeggio quadra, lead a dente di sega) non sta nel mixer:
+   niente dente di sega, e snd_tune tiene una voce sola. La lead, se non
+   e' una pausa, copre l'arpeggio; il basso resta fuori. Gli indici del
+   file sono un'ottava sotto la tabella in Hz (N_A3 = 440, N_E4 = 659,
+   N_A4 = 880, N_B2+12 = 494, N_C4+1 = 554).
+   Infiltrazione 122 BPM (123 ms a sedicesimo), dal titolo e per la run.
+   Boss 138 BPM (109 ms) solo nella stanza BOSS del ponte, deck 2.
+   snd_tune non fa loop e un snd_voice sulla stessa voce lo spegne:
+   a fine frase si rilancia, e se lama o pickup prendono la voce 1 il
+   tema riparte dal sedicesimo in corso quando l'effetto finisce.
+   Gli spari stanno sulla voce 0 e non la rubano. */
+#define BGM_INFILTRATION 1
+#define BGM_BOSS_BATTLE 2
+#define BGM_VOICE 1
+#define BGM_LEN 32
+#define BGM_INFIL_MS 123
+#define BGM_BOSS_MS 109
+/* Meta' del livello precedente, cosi' la quadra non copre gli spari.
+   Sul titolo Y e B spostano g_bgm_lvl: 2 e' questo volume, 4 torna al
+   precedente, 0 zittisce. Il boss resta un filo piu' alto. */
+#define BGM_VOL_IN 18
+#define BGM_VOL_BOSS 22
+#define BGM_LVL_MAX 4
+#define BGM_LVL_DEF 2
+
+#define BGM_N(hz, ms) {(uint16_t)(hz), (uint16_t)(ms)}
+
+static const lippus_note_t g_bgm_infil[BGM_LEN] = {
+    BGM_N(659, BGM_INFIL_MS), BGM_N(523, BGM_INFIL_MS), BGM_N(659, BGM_INFIL_MS), BGM_N(587, BGM_INFIL_MS),
+    BGM_N(523, BGM_INFIL_MS), BGM_N(523, BGM_INFIL_MS), BGM_N(440, BGM_INFIL_MS), BGM_N(523, BGM_INFIL_MS),
+    BGM_N(523, BGM_INFIL_MS), BGM_N(440, BGM_INFIL_MS), BGM_N(587, BGM_INFIL_MS), BGM_N(440, BGM_INFIL_MS),
+    BGM_N(494, BGM_INFIL_MS), BGM_N(494, BGM_INFIL_MS), BGM_N(587, BGM_INFIL_MS), BGM_N(494, BGM_INFIL_MS),
+    BGM_N(659, BGM_INFIL_MS), BGM_N(523, BGM_INFIL_MS), BGM_N(784, BGM_INFIL_MS), BGM_N(523, BGM_INFIL_MS),
+    BGM_N(880, BGM_INFIL_MS), BGM_N(659, BGM_INFIL_MS), BGM_N(784, BGM_INFIL_MS), BGM_N(659, BGM_INFIL_MS),
+    BGM_N(698, BGM_INFIL_MS), BGM_N(440, BGM_INFIL_MS), BGM_N(659, BGM_INFIL_MS), BGM_N(587, BGM_INFIL_MS),
+    BGM_N(659, BGM_INFIL_MS), BGM_N(392, BGM_INFIL_MS), BGM_N(494, BGM_INFIL_MS), BGM_N(392, BGM_INFIL_MS),
+};
+
+static const lippus_note_t g_bgm_boss[BGM_LEN] = {
+    BGM_N(880, BGM_BOSS_MS), BGM_N(349, BGM_BOSS_MS), BGM_N(880, BGM_BOSS_MS), BGM_N(784, BGM_BOSS_MS),
+    BGM_N(698, BGM_BOSS_MS), BGM_N(349, BGM_BOSS_MS), BGM_N(587, BGM_BOSS_MS), BGM_N(349, BGM_BOSS_MS),
+    BGM_N(698, BGM_BOSS_MS), BGM_N(587, BGM_BOSS_MS), BGM_N(784, BGM_BOSS_MS), BGM_N(698, BGM_BOSS_MS),
+    BGM_N(659, BGM_BOSS_MS), BGM_N(554, BGM_BOSS_MS), BGM_N(659, BGM_BOSS_MS), BGM_N(554, BGM_BOSS_MS),
+    BGM_N(587, BGM_BOSS_MS), BGM_N(349, BGM_BOSS_MS), BGM_N(698, BGM_BOSS_MS), BGM_N(587, BGM_BOSS_MS),
+    BGM_N(880, BGM_BOSS_MS), BGM_N(440, BGM_BOSS_MS), BGM_N(784, BGM_BOSS_MS), BGM_N(698, BGM_BOSS_MS),
+    BGM_N(784, BGM_BOSS_MS), BGM_N(466, BGM_BOSS_MS), BGM_N(698, BGM_BOSS_MS), BGM_N(659, BGM_BOSS_MS),
+    BGM_N(587, BGM_BOSS_MS), BGM_N(659, BGM_BOSS_MS), BGM_N(784, BGM_BOSS_MS), BGM_N(659, BGM_BOSS_MS),
+};
+
+static int g_bgm_theme;
+static int g_bgm_vol;
+static int g_bgm_lvl = BGM_LVL_DEF;
+static int g_bgm_total;
+static int g_bgm_pos;
+static int g_bgm_hold;
+static int g_bgm_need_arm;
+static int g_bgm_running;
+static const lippus_note_t *g_bgm_notes;
+static int g_bgm_count;
+
+static int bgm_level_vol(int base) {
+    return base * g_bgm_lvl / BGM_LVL_DEF;
+}
+
+static void bgm_set_theme(int theme) {
+    const lippus_note_t *notes;
+    int count;
+    int vol;
+    int total;
+    int i;
+    if (theme != BGM_BOSS_BATTLE) {
+        theme = BGM_INFILTRATION;
+    }
+    if (theme == g_bgm_theme && g_bgm_notes) {
+        return;
+    }
+    if (theme == BGM_BOSS_BATTLE) {
+        notes = g_bgm_boss;
+        count = BGM_LEN;
+        vol = bgm_level_vol(BGM_VOL_BOSS);
+    } else {
+        notes = g_bgm_infil;
+        count = BGM_LEN;
+        vol = bgm_level_vol(BGM_VOL_IN);
+    }
+    total = 0;
+    for (i = 0; i < count; i++) {
+        total += (int)notes[i].ms;
+    }
+    g_bgm_theme = theme;
+    g_bgm_notes = notes;
+    g_bgm_count = count;
+    g_bgm_vol = vol;
+    g_bgm_total = total > 0 ? total : 1;
+    g_bgm_pos = 0;
+    g_bgm_running = 0;
+    g_bgm_need_arm = 1;
+}
+
+static void bgm_arm(int pos) {
+    int i;
+    int acc;
+    int step;
+    if (!g_bgm_notes || g_bgm_count <= 0) {
+        return;
+    }
+    if (pos < 0 || pos >= g_bgm_total) {
+        pos = 0;
+    }
+    acc = 0;
+    step = 0;
+    for (i = 0; i < g_bgm_count; i++) {
+        int dur = (int)g_bgm_notes[i].ms;
+        if (pos < acc + dur) {
+            step = i;
+            /* Il firmware riparte dall'attacco del sedicesimo. */
+            g_bgm_pos = acc;
+            break;
+        }
+        acc += dur;
+    }
+    snd_tune(BGM_VOICE, SND_SQUARE, (unsigned)g_bgm_vol, g_bgm_notes + step,
+             (unsigned)(g_bgm_count - step));
+}
+
+static void bgm_nudge(int dir) {
+    int next = g_bgm_lvl + dir;
+    int base;
+    if (next < 0) {
+        next = 0;
+    }
+    if (next > BGM_LVL_MAX) {
+        next = BGM_LVL_MAX;
+    }
+    if (next == g_bgm_lvl) {
+        return;
+    }
+    g_bgm_lvl = next;
+    base = g_bgm_theme == BGM_BOSS_BATTLE ? BGM_VOL_BOSS : BGM_VOL_IN;
+    g_bgm_vol = bgm_level_vol(base);
+    g_bgm_need_arm = 1;
+}
+
+static void bgm_hold(int ms) {
+    if (ms > g_bgm_hold) {
+        g_bgm_hold = ms;
+    }
+}
+
+static void bgm_follow(void) {
+    int theme;
+    if (g_state == ST_PAUSE || g_state == ST_INV || g_state == ST_SLOT) {
+        return;
+    }
+    theme = BGM_INFILTRATION;
+    if (g_state == ST_PLAY && g_deck == 2 && (unsigned)g_rx < MAP && (unsigned)g_ry < MAP &&
+        g_map[ri(g_rx, g_ry)].kind == K_BOSS) {
+        theme = BGM_BOSS_BATTLE;
+    }
+    bgm_set_theme(theme);
+}
+
+static void bgm_tick(unsigned frame_ms) {
+    if (frame_ms == 0) {
+        frame_ms = 1;
+    }
+    bgm_follow();
+    if (!g_bgm_notes || g_bgm_total <= 0) {
+        return;
+    }
+    if (g_bgm_running) {
+        g_bgm_pos += (int)frame_ms;
+        if (g_bgm_pos >= g_bgm_total) {
+            g_bgm_pos = 0;
+            g_bgm_need_arm = 1;
+        }
+    }
+    if (g_bgm_hold > 0) {
+        g_bgm_hold -= (int)frame_ms;
+        if (g_bgm_hold > 0) {
+            return;
+        }
+        g_bgm_hold = 0;
+        g_bgm_need_arm = 1;
+    }
+    if (!g_bgm_need_arm) {
+        return;
+    }
+    g_bgm_need_arm = 0;
+    g_bgm_running = 1;
+    bgm_arm(g_bgm_pos);
+}
+
 static void sfx(int id) {
     switch (id) {
     case SFX_PULSE:
@@ -458,6 +653,7 @@ static void sfx(int id) {
     case SFX_OC:
         sfx_sweep(0, SND_SQUARE, 1520, 180, 180, 160);
         sfx_sweep(1, SND_SQUARE, 760, 90, 140, 180);
+        bgm_hold(180);
         break;
     case SFX_RAIL:
         sfx_sweep(0, SND_SQUARE, 1800, 70, 200, 220);
@@ -466,20 +662,24 @@ static void sfx(int id) {
     case SFX_BLADE:
         sfx_sweep(1, SND_TRIANGLE, 420, 130, 160, 140);
         sfx_sweep(3, SND_NOISE, 2400, 600, 100, 120);
+        bgm_hold(140);
         break;
     case SFX_PARRY:
         sfx_sweep(0, SND_SQUARE, 1760, 2640, 180, 90);
         sfx_sweep(1, SND_TRIANGLE, 880, 1320, 150, 120);
+        bgm_hold(120);
         break;
     case SFX_VENT:
         sfx_sweep(1, SND_TRIANGLE, 520, 1040, 160, 160);
         sfx_sweep(3, SND_NOISE, 3200, 900, 80, 100);
+        bgm_hold(160);
         break;
     case SFX_ALARM:
         sfx_sweep(2, SND_SQUARE, 310, 140, 170, 280);
         break;
     case SFX_THROW:
         sfx_sweep(1, SND_TRIANGLE, 260, 620, 130, 110);
+        bgm_hold(110);
         break;
     case SFX_BOOM:
         sfx_sweep(2, SND_SQUARE, 190, 40, 210, 360);
@@ -497,9 +697,11 @@ static void sfx(int id) {
         break;
     case SFX_LOCK:
         sfx_sweep(1, SND_SQUARE, 150, 110, 160, 160);
+        bgm_hold(160);
         break;
     case SFX_PICK:
         sfx_sweep(1, SND_TRIANGLE, 660, 1320, 150, 140);
+        bgm_hold(140);
         break;
     case SFX_DROID:
         sfx_sweep(0, SND_SQUARE, 920, 1480, 110, 100);
@@ -527,6 +729,7 @@ static void sfx(int id) {
         break;
     case SFX_DRY:
         sfx_sweep(1, SND_SQUARE, 180, 90, 80, 40);
+        bgm_hold(40);
         break;
     default:
         break;
@@ -537,9 +740,17 @@ static void bake_tiles(void) {
     int t, y, x;
     for (t = 0; t < TID_COUNT; t++) {
         const uint8_t (*tile)[16] = ROOM_TILESET[t];
+        int keyed = t >= TID_IWALL_H && t <= TID_PIPE_V;
         for (y = 0; y < 16; y++) {
             for (x = 0; x < 16; x++) {
-                g_tile_rgb[t][y * 16 + x] = SCI_FI_PALETTE_32[tile[y][x]];
+                uint8_t ix = tile[y][x];
+                if (keyed && ix == 0) {
+                    ix = TILE_FLOOR_PLATE[y][x];
+                    if (ix == 0) {
+                        ix = 1;
+                    }
+                }
+                g_tile_rgb[t][y * 16 + x] = SCI_FI_PALETTE_32[ix];
             }
         }
     }
@@ -642,7 +853,7 @@ static void fmt_u(char *d, unsigned n) {
 
 static int solid_tid(int tid) {
     return tid == TID_WALL_HULL || tid == TID_CRATE_COVER || tid == TID_DOOR_CLOSED ||
-           tid == TID_DOOR_LOCKED;
+           tid == TID_DOOR_LOCKED || (tid >= TID_IWALL_H && tid <= TID_PIPE_V);
 }
 
 static int solid_at(int x, int y) {
@@ -858,6 +1069,30 @@ static void build_geometry(void) {
                         rails[nrail++] = ty;
                     }
                 }
+            } else if (ch == '[') {
+                tid = TID_IWALL_HL;
+            } else if (ch == '-') {
+                tid = TID_IWALL_H;
+            } else if (ch == ']') {
+                tid = TID_IWALL_HR;
+            } else if (ch == '|') {
+                tid = TID_IWALL_V;
+            } else if (ch == 'P') {
+                tid = TID_IWALL_PILLAR;
+            } else if (ch == 'T') {
+                tid = TID_MACH_CONSOLE;
+            } else if (ch == 'S') {
+                tid = TID_MACH_SERVER;
+            } else if (ch == 'N') {
+                tid = TID_MACH_GENERATOR;
+            } else if (ch == '=') {
+                tid = TID_PIPE_H;
+            } else if (ch == '!') {
+                tid = TID_PIPE_V;
+            } else if (ch == 'Z') {
+                tid = TID_FLOOR_CAUTION;
+            } else if (ch == '+') {
+                tid = TID_FLOOR_PAD;
             } else if (ch == 'B') {
                 tid = TID_FLOOR_PLATE;
                 if (g_nbar < MAX_BAR) {
@@ -895,7 +1130,8 @@ static int spawn_cell_ok(int tx, int ty) {
         return 0;
     }
     tid = g_tiles[ty][tx];
-    return tid == TID_FLOOR_PLATE || tid == TID_FLOOR_GRATE;
+    return tid == TID_FLOOR_PLATE || tid == TID_FLOOR_GRATE || tid == TID_FLOOR_CAUTION ||
+           tid == TID_FLOOR_PAD;
 }
 
 static int pick_cell(int *ox, int *oy) {
@@ -3058,6 +3294,21 @@ static void title_bg(void) {
     blit(292, 168, &SPR_ENEMY_GRUNT_E_0[0][0], 16, 16, 1, 0);
 }
 
+static void draw_vol_hint(void) {
+    char line[20];
+    int i;
+    int n = 0;
+    const char *p = "Y+  B-  VOL ";
+    while (*p && n < 14) {
+        line[n++] = *p++;
+    }
+    for (i = 0; i < BGM_LVL_MAX; i++) {
+        line[n++] = (char)(i < g_bgm_lvl ? '#' : '-');
+    }
+    line[n] = 0;
+    text(-1, 162, line, g_bgm_lvl ? COL_BATTERY_GOLD : COL_STEEL_MID, 1);
+}
+
 static void title_foot(void) {
     char num[8];
     text(-1, 176, "PRESS START", COL_NEON_LIME, 1);
@@ -3089,44 +3340,43 @@ static void draw_title(void) {
         loot_row(94, &ICON_WEP_MINIGUN[0][0], "MINIGUN", "BRIDGE", COL_BATTERY_GOLD);
         loot_row(126, &ICON_WEP_PISTOL[0][0], "PISTOL", "ALREADY WITH YOU", COL_CHROME_WHITE);
         title_foot();
-        return;
-    }
-    if (g_page == 2) {
+    } else if (g_page == 2) {
         text(-1, 16, "MEDKIT", COL_NEON_LIME, 1);
         loot_row(30, &SPR_DROP_MEDKIT[0][0], "MEDKIT", "RESTORES HP", COL_NEON_LIME);
         loot_row(54, &SPR_DROP_SHIELD_CELL[0][0], "SHIELD CELL", "RESTORES SHIELD", COL_ION_CYAN);
-        text(-1, 82, "AMMO", COL_BATTERY_GOLD, 1);
-        loot_row(96, &SPR_DROP_FUSION_CELL[0][0], "FUSION CELL", "SCATTER", COL_PLASMA_ORANGE);
-        loot_row(120, &SPR_DROP_YELLOW_BATTERY[0][0], "YELLOW CELL", "RAIL AND MINIGUN", COL_BATTERY_GOLD);
-        loot_row(144, &SPR_DROP_RED_CORE[0][0], "RED CORE", "GRENADES", COL_LASER_RED);
+        text(-1, 76, "AMMO", COL_BATTERY_GOLD, 1);
+        loot_row(90, &SPR_DROP_FUSION_CELL[0][0], "FUSION CELL", "SCATTER", COL_PLASMA_ORANGE);
+        loot_row(112, &SPR_DROP_YELLOW_BATTERY[0][0], "YELLOW CELL", "RAIL AND MINIGUN", COL_BATTERY_GOLD);
+        loot_row(134, &SPR_DROP_RED_CORE[0][0], "RED CORE", "GRENADES", COL_LASER_RED);
         title_foot();
-        return;
-    }
-    text(-1, 20, "INCURSORE", COL_ION_CYAN, 2);
-    text(-1, 56, "VS HEGEMONY", COL_PLASMA_VIOLET, 1);
-    if (g_page == 3) {
-        text(-1, 80, "STICK MOVE AND AIM", COL_CHROME_WHITE, 1);
-        text(-1, 96, "A FIRE    B STRAFE", COL_CHROME_WHITE, 1);
-        text(-1, 112, "X DOOR OR VENT", COL_CHROME_WHITE, 1);
-        text(-1, 128, "Y GRENADE", COL_CHROME_WHITE, 1);
-        text(-1, 144, "CLICK BLADE", COL_CHROME_WHITE, 1);
-    } else if (g_page == 4) {
-        text(-1, 80, "SELECT SWAPS GUNS", COL_CHROME_WHITE, 1);
-        text(-1, 96, "HOLD SELECT FOR GEAR", COL_CHROME_WHITE, 1);
-        text(-1, 120, "DEATH RESETS THE RUN", COL_LASER_RED, 1);
-        text(-1, 136, "DATA STAYS WITH YOU", COL_NEON_LIME, 1);
     } else {
-        text(-1, 84, "STICK FLIPS THESE SLIDES", COL_CHROME_WHITE, 1);
-        text(-1, 108, "GUNS, MEDKIT, AMMO", COL_BATTERY_GOLD, 1);
-        fmt_u(num, (unsigned)g_data);
-        text(96, 132, "DATA", COL_TITANIUM_LIGHT, 1);
-        text(136, 132, num, COL_NEON_LIME, 1);
+        text(-1, 20, "INCURSORE", COL_ION_CYAN, 2);
+        text(-1, 56, "VS HEGEMONY", COL_PLASMA_VIOLET, 1);
+        if (g_page == 3) {
+            text(-1, 80, "STICK MOVE AND AIM", COL_CHROME_WHITE, 1);
+            text(-1, 96, "A FIRE    B STRAFE", COL_CHROME_WHITE, 1);
+            text(-1, 112, "X DOOR OR VENT", COL_CHROME_WHITE, 1);
+            text(-1, 128, "Y GRENADE", COL_CHROME_WHITE, 1);
+            text(-1, 144, "CLICK BLADE", COL_CHROME_WHITE, 1);
+        } else if (g_page == 4) {
+            text(-1, 80, "SELECT SWAPS GUNS", COL_CHROME_WHITE, 1);
+            text(-1, 96, "HOLD SELECT FOR GEAR", COL_CHROME_WHITE, 1);
+            text(-1, 120, "DEATH RESETS THE RUN", COL_LASER_RED, 1);
+            text(-1, 136, "DATA STAYS WITH YOU", COL_NEON_LIME, 1);
+        } else {
+            text(-1, 84, "STICK FLIPS THESE SLIDES", COL_CHROME_WHITE, 1);
+            text(-1, 108, "GUNS, MEDKIT, AMMO", COL_BATTERY_GOLD, 1);
+            fmt_u(num, (unsigned)g_data);
+            text(96, 132, "DATA", COL_TITANIUM_LIGHT, 1);
+            text(136, 132, num, COL_NEON_LIME, 1);
+        }
+        text(-1, 176, "PRESS START", COL_NEON_LIME, 1);
+        text(-1, 192, "SELECT UPGRADES", COL_BATTERY_GOLD, 1);
+        if (any_save()) {
+            text(-1, 208, "X LOAD", COL_ION_CYAN, 1);
+        }
     }
-    text(-1, 168, "PRESS START", COL_NEON_LIME, 1);
-    text(-1, 184, "SELECT UPGRADES", COL_BATTERY_GOLD, 1);
-    if (any_save()) {
-        text(-1, 200, "X LOAD", COL_ION_CYAN, 1);
-    }
+    draw_vol_hint();
 }
 
 static void draw_upgrade(void) {
@@ -3284,6 +3534,12 @@ static void tick_title(const lippus_pad_t *pad) {
     }
     if (pad_pressed(pad, LIPPUS_RIGHT)) {
         g_page = (g_page + 1) % TITLE_PAGES;
+    }
+    if (pad_pressed(pad, LIPPUS_Y)) {
+        bgm_nudge(1);
+    }
+    if (pad_pressed(pad, LIPPUS_B)) {
+        bgm_nudge(-1);
     }
     if (pad_pressed(pad, LIPPUS_START) || pad_pressed(pad, LIPPUS_A)) {
         begin_run();
@@ -3505,9 +3761,11 @@ void lippus_main(void) {
     bake_tiles();
     g_state = ST_TITLE;
     g_face = 2;
+    bgm_set_theme(BGM_INFILTRATION);
     for (;;) {
         lippus_pad_t pad = pad_poll();
         sfx_tick(FRAME);
+        bgm_tick(FRAME);
         if (g_state == ST_TITLE) {
             tick_title(&pad);
         } else if (g_state == ST_UP) {

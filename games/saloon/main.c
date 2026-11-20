@@ -1,4 +1,5 @@
 #include "lippus.h"
+#include "lippus/sfx.h"
 
 #include "sprites.h"
 #include "westfont.h"
@@ -484,6 +485,211 @@ static void refund_and_clear(void) {
 
 static void grant_lives(void);
 
+/* Musica solo in ST_PLAY. Quattro voci, 132 BPM, semicrome.
+   Lo spartito e' quello del sequencer: basso triangolo, twang quadra,
+   fischio (il mixer non ha il dente di sega: sta sulla quadra), frusta
+   sul rumore. Gli effetti tengono la voce per la loro durata, cosi' il
+   galoppo non li taglia. Il volume 0..1 del synth sta su 0..255. */
+#define FRAME_MS 33
+#define FW_STEP_MS 114
+#define FW_LEN 64
+
+static const uint16_t FW_HZ[46] = {
+    65, 69, 73, 78, 82, 87, 93, 98, 104, 110, 117, 123,
+    131, 139, 147, 156, 165, 175, 185, 196, 208, 220, 233, 247,
+    262, 277, 294, 311, 330, 349, 370, 392, 415, 440, 466, 494,
+    523, 554, 587, 622, 659, 698, 740, 784, 831, 880
+};
+
+#define FW_REST 0
+#define FW_E2 4
+#define FW_F2 5
+#define FW_G2 7
+#define FW_A2 9
+#define FW_B2 11
+#define FW_C3 12
+#define FW_D3 14
+#define FW_E3 16
+#define FW_F3 17
+#define FW_G3 19
+#define FW_Gs3 20
+#define FW_A3 21
+#define FW_B3 23
+#define FW_C4 24
+#define FW_D4 26
+#define FW_E4 28
+#define FW_F4 29
+#define FW_G4 31
+#define FW_Gs4 32
+#define FW_A4 33
+#define FW_B4 35
+#define FW_C5 36
+#define FW_D5 38
+#define FW_E5 40
+#define FW_F5 41
+#define FW_G5 43
+#define FW_A5 45
+
+static const uint8_t FW_BASS[FW_LEN] = {
+    FW_A2, FW_A2, FW_E3, FW_REST, FW_A2, FW_A2, FW_E3, FW_REST,
+    FW_A2, FW_A2, FW_E3, FW_REST, FW_A2, FW_A2, FW_E3, FW_G2,
+    FW_F2, FW_F2, FW_C3, FW_REST, FW_F2, FW_F2, FW_C3, FW_REST,
+    FW_E2, FW_E2, FW_B2, FW_REST, FW_E2, FW_E2, FW_B2, FW_G2,
+    FW_A2, FW_A2, FW_E3, FW_REST, FW_A2, FW_A2, FW_E3, FW_REST,
+    FW_C3, FW_C3, FW_G3, FW_REST, FW_C3, FW_C3, FW_G3, FW_REST,
+    FW_F2, FW_F2, FW_C3, FW_REST, FW_E2, FW_E2, FW_B2, FW_E2,
+    FW_A2, FW_REST, FW_E3, FW_REST, FW_A2, FW_REST, FW_REST, FW_REST
+};
+
+static const uint8_t FW_TWANG[FW_LEN] = {
+    FW_REST, FW_REST, FW_A3, FW_C4, FW_REST, FW_REST, FW_E4, FW_C4,
+    FW_REST, FW_REST, FW_A3, FW_C4, FW_REST, FW_REST, FW_E4, FW_C4,
+    FW_REST, FW_REST, FW_F3, FW_A3, FW_REST, FW_REST, FW_C4, FW_A3,
+    FW_REST, FW_REST, FW_E3, FW_Gs3, FW_REST, FW_REST, FW_B3, FW_Gs3,
+    FW_REST, FW_REST, FW_A3, FW_C4, FW_REST, FW_REST, FW_E4, FW_C4,
+    FW_REST, FW_REST, FW_C4, FW_E4, FW_REST, FW_REST, FW_G4, FW_E4,
+    FW_REST, FW_REST, FW_F3, FW_A3, FW_REST, FW_REST, FW_E3, FW_Gs3,
+    FW_A3, FW_REST, FW_E4, FW_REST, FW_A3, FW_REST, FW_REST, FW_REST
+};
+
+static const uint8_t FW_LEAD[FW_LEN] = {
+    FW_A4, FW_REST, FW_REST, FW_REST, FW_E5, FW_REST, FW_REST, FW_REST,
+    FW_F5, FW_E5, FW_C5, FW_A4, FW_E5, FW_REST, FW_REST, FW_REST,
+    FW_F5, FW_REST, FW_REST, FW_REST, FW_D5, FW_REST, FW_C5, FW_B4,
+    FW_E5, FW_REST, FW_REST, FW_REST, FW_REST, FW_REST, FW_REST, FW_REST,
+    FW_A4, FW_REST, FW_C5, FW_REST, FW_E5, FW_REST, FW_A5, FW_REST,
+    FW_G5, FW_F5, FW_E5, FW_D5, FW_E5, FW_REST, FW_REST, FW_REST,
+    FW_F5, FW_E5, FW_D5, FW_C5, FW_B4, FW_C5, FW_B4, FW_Gs4,
+    FW_A4, FW_REST, FW_E5, FW_REST, FW_A4, FW_REST, FW_REST, FW_REST
+};
+
+static const uint8_t FW_PERC[FW_LEN] = {
+    0, 0, 1, 0, 2, 0, 0, 0, 0, 0, 1, 0, 2, 0, 1, 0,
+    0, 0, 1, 0, 2, 0, 0, 0, 0, 0, 1, 0, 2, 0, 1, 0,
+    0, 0, 1, 0, 2, 0, 0, 0, 0, 0, 1, 0, 2, 0, 1, 0,
+    0, 0, 1, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 0, 0, 0
+};
+
+static int g_hold[4];
+static int g_music;
+static int g_bgm_step;
+static int g_bgm_acc;
+/* Livello 2 e' il volume di sempre. Si parte da zero, muta.
+   Sul carosello Y sale e B scende. */
+#define MUS_LVL_MAX 4
+#define MUS_LVL_DEF 2
+static int g_mus_lvl = 0;
+
+static unsigned mus_vol(unsigned base) {
+    return base * (unsigned)g_mus_lvl / (unsigned)MUS_LVL_DEF;
+}
+
+static int hold_frames(unsigned ms) {
+    int frames = (int)((ms + FRAME_MS - 1) / FRAME_MS);
+    if (frames < 1) {
+        frames = 1;
+    }
+    return frames;
+}
+
+static void note(unsigned voice, unsigned wave, int hz, unsigned volume, unsigned ms) {
+    int frames;
+    if (voice >= 4) {
+        return;
+    }
+    sfx_sweep(voice, wave, hz, hz, volume, ms);
+    frames = hold_frames(ms);
+    if (frames > g_hold[voice]) {
+        g_hold[voice] = frames;
+    }
+}
+
+static void sweep(unsigned voice, unsigned wave, int hz0, int hz1, unsigned volume, unsigned ms) {
+    int frames;
+    if (voice >= 4) {
+        return;
+    }
+    sfx_sweep(voice, wave, hz0, hz1, volume, ms);
+    frames = hold_frames(ms);
+    if (frames > g_hold[voice]) {
+        g_hold[voice] = frames;
+    }
+}
+
+static void sfx_shot(void) { snd_play(k_shot, K_SHOT_N, 220); }
+
+static void sfx_poster(void) { sweep(0, SND_TRIANGLE, 988, 1319, 140, 120); }
+
+static void sfx_door(void) { sweep(1, SND_SQUARE, 140, 220, 89, 80); }
+
+static void bgm_note(unsigned voice, unsigned wave, int hz, int hz1, unsigned volume, unsigned ms) {
+    if (g_hold[voice] > 0) {
+        return;
+    }
+    sfx_sweep(voice, wave, hz, hz1, volume, ms);
+}
+
+static void bgm_step(void) {
+    int s = g_bgm_step;
+    int n;
+    int hz;
+    n = FW_BASS[s];
+    if (n != FW_REST && n < 46) {
+        hz = FW_HZ[n];
+        bgm_note(2, SND_TRIANGLE, hz, hz - hz / 100, mus_vol(89), 102);
+    }
+    n = FW_TWANG[s];
+    if (n != FW_REST && n < 46) {
+        hz = FW_HZ[n];
+        bgm_note(1, SND_SQUARE, hz, hz * 985 / 1000, mus_vol(34), 74);
+    }
+    n = FW_LEAD[s];
+    if (n != FW_REST && n < 46) {
+        hz = FW_HZ[n];
+        bgm_note(0, SND_SQUARE, hz, hz * 1004 / 1000, mus_vol(54), 245);
+    }
+    n = FW_PERC[s];
+    if (n != 0) {
+        bgm_note(3, SND_NOISE, 1400, 450, mus_vol(n == 2 ? 32 : 14), n == 2 ? 55 : 22);
+    }
+    g_bgm_step = (g_bgm_step + 1) & (FW_LEN - 1);
+}
+
+static void bgm_rewind(void) {
+    g_bgm_step = 0;
+    g_bgm_acc = 0;
+}
+
+static void audio_frame(void) {
+    int v;
+    sfx_tick(FRAME_MS);
+    if (g_state == ST_PLAY) {
+        int start = !g_music;
+        g_music = 1;
+        if (start) {
+            g_bgm_acc = FW_STEP_MS;
+        }
+        g_bgm_acc += FRAME_MS;
+        while (g_bgm_acc >= FW_STEP_MS) {
+            g_bgm_acc -= FW_STEP_MS;
+            bgm_step();
+        }
+    } else if (g_music) {
+        g_music = 0;
+        for (v = 0; v < 4; v++) {
+            if (g_hold[v] == 0) {
+                sfx_slots()[v].on = 0;
+                snd_voice(v, SND_OFF, 0, 0, 0);
+            }
+        }
+    }
+    for (v = 0; v < 4; v++) {
+        if (g_hold[v] > 0) {
+            g_hold[v]--;
+        }
+    }
+}
+
 static void lose_life(void) {
     if (g_state != ST_PLAY) {
         return;
@@ -495,7 +701,7 @@ static void lose_life(void) {
         g_timer = BANG_FRAMES;
         return;
     }
-    snd_voice(3, SND_TRIANGLE, 110, 140, 220);
+    note(3, SND_TRIANGLE, 110, 140, 220);
     if (g_lives <= 0) {
         g_state = ST_CLEAR;
         g_timer = 0;
@@ -523,7 +729,7 @@ static int shootable(const slot_t *s) {
 static void fire(int i) {
     slot_t *s = &g_slot[i];
     s->flash = 5;
-    snd_play(k_shot, K_SHOT_N, 220);
+    sfx_shot();
     if (!shootable(s)) {
         return;
     }
@@ -558,19 +764,15 @@ static void fire(int i) {
     g_lv_civs++;
     s->phase = PH_ANGRY;
     s->timer = 30;
-    snd_voice(2, SND_TRIANGLE, 146, 170, 220);
+    note(2, SND_TRIANGLE, 146, 170, 220);
 }
-
-static const lippus_note_t k_step[2] = {
-    {110, 28},
-    {64, 42},
-};
 
 static void footstep(int before, int after) {
     if (after <= 0 || (before / 16) == (after / 16)) {
         return;
     }
-    snd_tune(1, SND_TRIANGLE, 72, k_step, 2);
+    /* Due note, 110 poi 64. Il passo tiene la voce del twang finche' finisce. */
+    sweep(1, SND_TRIANGLE, 110, 64, 72, 70);
 }
 
 static void tick_slot(int i) {
@@ -582,6 +784,9 @@ static void tick_slot(int i) {
     }
     if (s->phase == PH_IN) {
         if (i == 1 && s->step < swing_time()) {
+            if (s->step == 0) {
+                sfx_door();
+            }
             s->step++;
             return;
         }
@@ -608,7 +813,7 @@ static void tick_slot(int i) {
             s->phase = PH_BANG;
             s->shown = s->tall;
             /* Primo sparo dell'interludio. Gli altri partono in ST_BANG. */
-            snd_play(k_shot, K_SHOT_N, 220);
+            sfx_shot();
             g_cause = 0;
             lose_life();
         }
@@ -641,8 +846,12 @@ static void tick_slot(int i) {
         return;
     }
     if (s->phase == PH_HIT) {
+        int was = s->timer;
         if (s->timer > 0) {
             s->timer--;
+        }
+        if (s->who == WHO_BANDIT && was > POSTER_FRAMES && s->timer <= POSTER_FRAMES) {
+            sfx_poster();
         }
         if (s->timer <= 0) {
             if (i == 1) {
@@ -748,6 +957,7 @@ static void begin_level(void) {
     g_bar = 0;
     g_state = ST_INTRO;
     g_timer = 36;
+    bgm_rewind();
 }
 
 static int bug_h(int kind) {
@@ -803,6 +1013,7 @@ static void begin_bonus(void) {
     g_bar_flash = 0;
     g_state = ST_INTRO;
     g_timer = 50;
+    bgm_rewind();
 }
 
 static int next_life_goal(void) {
@@ -829,7 +1040,7 @@ static void grant_lives(void) {
         gained++;
     }
     if (gained) {
-        snd_voice(2, SND_TRIANGLE, 988, 110, 160);
+        note(2, SND_TRIANGLE, 988, 110, 160);
     }
 }
 
@@ -893,7 +1104,7 @@ static void bonus_shot(int lane) {
     int best_d;
     int kind;
     int pay;
-    snd_play(k_shot, K_SHOT_N, 220);
+    sfx_shot();
     g_sight_flash[lane] = 5;
     best = -1;
     best_d = SIGHT_HIT + 1;
@@ -981,8 +1192,8 @@ static void tick_bonus(const lippus_pad_t *pad) {
         g_state = ST_CLEAR;
         g_timer = 0;
         g_after_over = 0;
-        snd_voice(2, SND_TRIANGLE, 523, 120, 140);
-        snd_voice(3, SND_TRIANGLE, 784, 90, 200);
+        note(2, SND_TRIANGLE, 523, 120, 140);
+        note(3, SND_TRIANGLE, 784, 90, 200);
     }
 }
 
@@ -1021,7 +1232,7 @@ static void bar_shot(void) {
     int best;
     int best_d;
     int limit;
-    snd_play(k_shot, K_SHOT_N, 220);
+    sfx_shot();
     g_bar_flash = 5;
     best = -1;
     limit = BAR_SIGHT_R * BAR_SIGHT_R;
@@ -1123,8 +1334,8 @@ static void tick_bar(const lippus_pad_t *pad) {
         g_state = ST_CLEAR;
         g_timer = 0;
         g_after_over = 0;
-        snd_voice(2, SND_TRIANGLE, 523, 120, 140);
-        snd_voice(3, SND_TRIANGLE, 784, 90, 200);
+        note(2, SND_TRIANGLE, 523, 120, 140);
+        note(3, SND_TRIANGLE, 784, 90, 200);
     }
 }
 
@@ -1138,6 +1349,12 @@ static void update(const lippus_pad_t *pad) {
     int span;
     g_attract_t++;
     if (g_state == ST_TITLE) {
+        if (pad_pressed(pad, LIPPUS_Y) && g_mus_lvl < MUS_LVL_MAX) {
+            g_mus_lvl++;
+        }
+        if (pad_pressed(pad, LIPPUS_B) && g_mus_lvl > 0) {
+            g_mus_lvl--;
+        }
         if (pad_pressed(pad, LIPPUS_START)) {
             new_game();
             return;
@@ -1186,7 +1403,7 @@ static void update(const lippus_pad_t *pad) {
         }
         /* Il colpo del bandito e' il primo. Gli altri ogni 9 frame. */
         if (g_timer > 0 && (g_timer % BANG_SHOT_GAP) == 0) {
-            snd_play(k_shot, K_SHOT_N, 220);
+            sfx_shot();
         }
         if (g_timer <= 0) {
             if (g_lives <= 0) {
@@ -1291,8 +1508,8 @@ static void update(const lippus_pad_t *pad) {
         g_state = ST_CLEAR;
         g_timer = 0;
         g_after_over = 0;
-        snd_voice(2, SND_TRIANGLE, 523, 120, 140);
-        snd_voice(3, SND_TRIANGLE, 784, 90, 200);
+        note(2, SND_TRIANGLE, 523, 120, 140);
+        note(3, SND_TRIANGLE, 784, 90, 200);
     }
 }
 
@@ -1688,6 +1905,21 @@ static void blit_fit(int slot, const uint16_t *pix, int w, int h) {
     gfx_clip(0, 0, 0, 0);
 }
 
+static void draw_vol_hint(int y) {
+    char line[20];
+    int i;
+    int n = 0;
+    const char *p = "Y+  B-  VOL ";
+    while (*p && n < 14) {
+        line[n++] = *p++;
+    }
+    for (i = 0; i < MUS_LVL_MAX; i++) {
+        line[n++] = (char)(i < g_mus_lvl ? '#' : '-');
+    }
+    line[n] = 0;
+    center(y, line, g_mus_lvl ? LIPPUS_AMBER : LIPPUS_RGB(120, 80, 48), 1);
+}
+
 static void draw_demo(void) {
     int beat = (g_attract_t / 60) % 4;
     const char *line = "A LEFT   B DOOR   X RIGHT";
@@ -1704,10 +1936,11 @@ static void draw_demo(void) {
         line = "A FAST SHOT PAYS $10";
         blit_fit(1, spr_taglia_porta, SPR_TAGLIA_PORTA_W, SPR_TAGLIA_PORTA_H);
     }
-    panel(196, 22);
-    center(202, line, LIPPUS_AMBER, 1);
+    panel(196, 40);
+    center(200, line, LIPPUS_AMBER, 1);
+    draw_vol_hint(214);
     if ((g_attract_t & 16) == 0) {
-        center(222, "PRESS START", LIPPUS_CREAM, 1);
+        center(226, "PRESS START", LIPPUS_CREAM, 1);
     }
 }
 
@@ -1740,8 +1973,9 @@ static void draw_scores(void) {
             draw_score_row(36 + col * 136, 32 + row * 18, i, &g_scores[i], color);
         }
     }
+    draw_vol_hint(206);
     if ((g_attract_t & 16) == 0) {
-        center(218, "PRESS START", LIPPUS_CREAM, 1);
+        center(220, "PRESS START", LIPPUS_CREAM, 1);
     }
 }
 
@@ -2069,17 +2303,18 @@ static void draw_attract_bonus(void) {
     }
     panel(4, 22);
     center(8, bugs ? "EVERY 2 LEVELS" : "THEN THE BAR", LIPPUS_CREAM, 1);
-    panel(164, 52);
+    panel(164, 72);
     if (bugs) {
-        center(170, "SHOOT BUGS IN THE SIGHT", LIPPUS_AMBER, 1);
-        center(186, "A FAST ONE PAYS MORE", LIPPUS_CREAM, 1);
+        center(168, "SHOOT BUGS IN THE SIGHT", LIPPUS_AMBER, 1);
+        center(182, "A FAST ONE PAYS MORE", LIPPUS_CREAM, 1);
     } else {
-        center(170, "SHOOT THE GLASSES", LIPPUS_AMBER, 1);
-        center(186, "BEFORE THEY FALL", LIPPUS_CREAM, 1);
+        center(168, "SHOOT THE GLASSES", LIPPUS_AMBER, 1);
+        center(182, "BEFORE THEY FALL", LIPPUS_CREAM, 1);
     }
-    center(202, "10000 THEN 40000 WINS A LIFE", LIPPUS_YELLOW, 1);
+    center(196, "10000 THEN 40000 WINS A LIFE", LIPPUS_YELLOW, 1);
+    draw_vol_hint(210);
     if ((g_attract_t & 16) == 0) {
-        center(222, "PRESS START", LIPPUS_CREAM, 1);
+        center(224, "PRESS START", LIPPUS_CREAM, 1);
     }
 }
 
@@ -2298,6 +2533,7 @@ void lippus_main(void) {
     for (;;) {
         lippus_pad_t pad = pad_poll();
         update(&pad);
+        audio_frame();
         draw();
         gfx_present();
         sys_frame(33);

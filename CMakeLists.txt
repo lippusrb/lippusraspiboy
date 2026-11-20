@@ -80,7 +80,7 @@ add_custom_command(TARGET lippus_os POST_BUILD
 include(sdk/cmake/lippus_game.cmake)
 lippus_add_game(palla DISPLAY_NAME "Palla" SOURCES games/palla/main.c)
 lippus_add_game(tasti DISPLAY_NAME "Tasti" SOURCES games/tasti/main.c)
-lippus_add_game(pacman DISPLAY_NAME "Pacman" SOURCES games/pacman/main.c)
+lippus_add_game(scavenger DISPLAY_NAME "Scavenger" SOURCES games/scavenger/main.c)
 lippus_add_game(maze_mouse DISPLAY_NAME "Maze Mouse" SOURCES games/maze_mouse/main.c)
 lippus_add_game(garden_defender DISPLAY_NAME "Garden Defender" SOURCES games/garden_defender/main.c)
 lippus_add_game(saloon DISPLAY_NAME "Saloon" SOURCES games/saloon/main.c)

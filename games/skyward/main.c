@@ -625,9 +625,18 @@ static int seq_hz[6];
 static int seq_ms[6];
 static int seq_n, seq_i, seq_left, seq_wave;
 static int amb_i, amb_left;
+/* Livello 2 e' il volume di sempre. Sulle slide Y sale e B scende. */
+#define MUS_BASE 36
+#define MUS_LVL_MAX 4
+#define MUS_LVL_DEF 2
+static int mus_lvl = MUS_LVL_DEF;
 
 static const uint16_t AMB_HZ[] = {196, 0, 247, 294, 0, 220, 0, 0};
 static const uint16_t AMB_MS[] = {180, 50, 160, 200, 60, 220, 80, 320};
+
+static unsigned mus_volume(void) {
+    return (unsigned)(MUS_BASE * mus_lvl / MUS_LVL_DEF);
+}
 
 struct crumb {
     int16_t row;
@@ -710,12 +719,34 @@ static void amb_tick(void) {
     if (AMB_HZ[amb_i] == 0) {
         snd_voice(3, SND_OFF, 0, 0, 0);
     } else {
-        snd_voice(3, SND_TRIANGLE, AMB_HZ[amb_i], 36, AMB_MS[amb_i]);
+        snd_voice(3, SND_TRIANGLE, AMB_HZ[amb_i], mus_volume(), AMB_MS[amb_i]);
     }
     amb_left = (int)AMB_MS[amb_i];
     amb_i++;
     if (amb_i >= (int)n) {
         amb_i = 0;
+    }
+}
+
+static void mus_nudge(int dir) {
+    int next = mus_lvl + dir;
+    int n = (int)(sizeof(AMB_HZ) / sizeof(AMB_HZ[0]));
+    if (next < 0) {
+        next = 0;
+    }
+    if (next > MUS_LVL_MAX) {
+        next = MUS_LVL_MAX;
+    }
+    if (next == mus_lvl) {
+        return;
+    }
+    mus_lvl = next;
+    if (amb_left > 0) {
+        amb_i--;
+        if (amb_i < 0) {
+            amb_i = n - 1;
+        }
+        amb_left = 0;
     }
 }
 
@@ -2698,11 +2729,28 @@ static void draw_scores(void) {
     draw_press_start();
 }
 
+static void draw_vol_hint(int y) {
+    char line[20];
+    int i;
+    int n = 0;
+    const char *p = "Y+  B-  VOL ";
+    while (*p && n < 14) {
+        line[n++] = *p++;
+    }
+    for (i = 0; i < MUS_LVL_MAX; i++) {
+        line[n++] = (char)(i < mus_lvl ? '#' : '-');
+    }
+    line[n] = 0;
+    text_cx(y, line, mus_lvl ? PAL[8] : PAL[3], 1);
+}
+
 static void draw_attract(void) {
     if (attract_page >= SLIDE_HOW) {
         draw_scores();
+        draw_vol_hint(204);
     } else {
         draw_how(attract_page);
+        draw_vol_hint(188);
     }
 }
 
@@ -2873,6 +2921,12 @@ void lippus_main(void) {
         int prev_py = py;
         if (state == ST_TITLE) {
             clock++;
+            if (pad_pressed(&pad, LIPPUS_Y)) {
+                mus_nudge(1);
+            }
+            if (pad_pressed(&pad, LIPPUS_B)) {
+                mus_nudge(-1);
+            }
             if (pad_pressed(&pad, LIPPUS_START) || pad_pressed(&pad, LIPPUS_A)) {
                 rank_hi = -1;
                 new_game();

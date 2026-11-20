@@ -1,7 +1,11 @@
 #include "lippus.h"
 
-/* Labirinto in verticale. Lo stick resta quello della console:
-   su e' sempre LIPPUS_UP. Gli sprite sono disegnati qui, non copiati. */
+#include "sprites.h"
+#include "../skyward/font.h"
+
+/* Scavenger. Labirinto in verticale: il rover raccoglie le celle e i
+   droni lo inseguono. Lo stick resta quello della console, su e'
+   sempre LIPPUS_UP. I tracciati delle mappe non cambiano. */
 
 const uint32_t lippus_orientation = LIPPUS_PORTRAIT;
 
@@ -24,6 +28,15 @@ const uint32_t lippus_orientation = LIPPUS_PORTRAIT;
 #define ST_DEAD 3
 #define ST_WIN 4
 #define ST_OVER 5
+#define ST_ATTRACT 6
+#define ST_NAME 7
+
+#define SCORE_N 20
+#define RECORD_NAME "SCAVENGR"
+#define SLIDE_N 4
+#define SLIDE_HOW 3
+#define SLIDE_LEN 120
+#define SCORE_HOLD 180
 
 static const char *const k_rows[] = {
     "############################",
@@ -63,8 +76,6 @@ static const char *const k_rows[] = {
 
 static const int8_t k_dx[4] = {0, -1, 0, 1};
 static const int8_t k_dy[4] = {-1, 0, 1, 0};
-
-/* Secondi di paura, lampeggi e pallini rimasti per Elroy. Dal livello 21 si ripete l'ultimo. */
 static const uint8_t k_fright_s[21] = {
     6, 5, 4, 3, 2, 5, 2, 2, 1, 5, 2, 1, 1, 3, 1, 1, 0, 1, 0, 0, 0,
 };
@@ -73,13 +84,6 @@ static const uint8_t k_fright_flash[21] = {
 };
 static const uint8_t k_elroy_dots[21] = {
     20, 30, 40, 40, 40, 50, 50, 50, 60, 60, 60, 80, 80, 80, 100, 100, 100, 100, 120, 120, 120,
-};
-
-static const uint16_t k_ghost_col[4] = {
-    LIPPUS_RED,
-    LIPPUS_RGB(255, 184, 222),
-    LIPPUS_CYAN,
-    LIPPUS_ORANGE,
 };
 
 static uint8_t g_map[31][COLS];
@@ -102,7 +106,6 @@ static int g_wave_i;
 static int g_wave_t;
 static int g_scatter;
 static int g_frame;
-static int g_waka;
 static int g_fruit_c;
 static int g_fruit_r;
 static int g_fruit;
@@ -122,7 +125,23 @@ static int g_no_dot_timer;
 static int g_eat_x;
 static int g_eat_y;
 static int g_eat_pts;
+static int g_tic;
 static uint32_t g_rng = 0x6D2B79F5u;
+
+typedef struct {
+    char name[3];
+    int score;
+} score_t;
+
+static score_t g_scores[SCORE_N];
+static int g_score_n;
+static int g_rank;
+static char g_initials[3];
+static int g_name_i;
+static int g_letter_hold;
+static int g_attract_page;
+static int g_attract_t;
+static char g_rec[LIPPUS_RECORD_MAX];
 
 typedef struct {
     int x;
@@ -468,29 +487,6 @@ static int fruit_points(void) {
     return 5000;
 }
 
-static uint16_t fruit_color(void) {
-    int lv = g_level;
-    if (lv <= 2) {
-        return LIPPUS_RED;
-    }
-    if (lv <= 4) {
-        return LIPPUS_ORANGE;
-    }
-    if (lv <= 6) {
-        return LIPPUS_RGB(180, 0, 48);
-    }
-    if (lv <= 8) {
-        return LIPPUS_GREEN;
-    }
-    if (lv <= 10) {
-        return LIPPUS_CYAN;
-    }
-    if (lv <= 12) {
-        return LIPPUS_YELLOW;
-    }
-    return LIPPUS_WHITE;
-}
-
 static void setup_waves(void) {
     int s1;
     int c3;
@@ -769,6 +765,8 @@ static void eat_dot(void) {
         g_dots--;
         g_score += 10;
         on_dot_eaten();
+        snd_voice(3, SND_SQUARE, g_tic ? 72 : 98, 70, 28);
+        g_tic ^= 1;
     } else if (tile == T_POWER) {
         int frames = k_fright_s[level_slot()] * 30;
         g_map[r][c] = T_EMPTY;
@@ -855,30 +853,6 @@ static void maybe_fruit(void) {
     }
 }
 
-static void audio_play(int moved) {
-    int eaten = g_dots0 - g_dots;
-    int hz = 360;
-    if (eaten > g_dots0 / 4) {
-        hz = 440;
-    }
-    if (eaten > g_dots0 / 2) {
-        hz = 520;
-    }
-    if (eaten > (g_dots0 * 3) / 4) {
-        hz = 640;
-    }
-    if (g_fright > 0) {
-        hz = (g_frame & 16) ? 240 : 190;
-        snd_voice(0, SND_TRIANGLE, (unsigned)hz, 140, 0);
-    } else {
-        snd_voice(0, SND_SQUARE, (unsigned)hz, 90, 0);
-    }
-    if (moved && (g_frame % 5) == 0) {
-        g_waka ^= 1;
-        snd_voice(1, SND_SQUARE, g_waka ? 170 : 230, 45, 35);
-    }
-}
-
 static void read_stick(const lippus_pad_t *pad) {
     int want = -1;
     if (pad_pressed(pad, LIPPUS_UP)) {
@@ -903,52 +877,102 @@ static void read_stick(const lippus_pad_t *pad) {
     }
 }
 
-static void draw_pac(int x, int y, int dir, int open) {
-    gfx_fill_circle(x, y, 4, LIPPUS_YELLOW);
-    if (open == 0 || dir < 0) {
-        return;
+static int face_of(int dir) {
+    if (dir == DIR_LEFT) {
+        return 1;
     }
-    int len = open == 1 ? 2 : 4;
-    for (int i = 1; i <= len; i++) {
-        int wide = i;
-        if (k_dx[dir] != 0) {
-            gfx_fill_rect(x + k_dx[dir] * i, y - wide, 1, wide * 2 + 1, LIPPUS_BLACK);
-        } else {
-            gfx_fill_rect(x - wide, y + k_dy[dir] * i, wide * 2 + 1, 1, LIPPUS_BLACK);
-        }
+    if (dir == DIR_UP) {
+        return 2;
     }
+    if (dir == DIR_DOWN) {
+        return 3;
+    }
+    return 0;
 }
 
-static void draw_ghost(const ghost_t *g, uint16_t color, int scared) {
-    int x = g->b.x;
-    int y = g->b.y;
-    if (!g->eyes) {
-        gfx_fill_circle(x, y - 1, 5, color);
-        gfx_fill_rect(x - 5, y - 1, 11, 6, color);
-        gfx_fill_rect(x - 5, y + 4, 3, 2, color);
-        gfx_fill_rect(x - 1, y + 3, 3, 3, color);
-        gfx_fill_rect(x + 3, y + 4, 3, 2, color);
+static void blit_indexed(int x0, int y0, int w, int h, const uint8_t *src, int dir, int bob) {
+    uint16_t pix[16 * 16];
+    int y;
+    int x;
+    if (w > 16 || h > 16 || w < 1 || h < 1) {
+        return;
     }
-    int px = 0;
-    int py = 0;
-    if (!scared && g->b.dir >= 0) {
-        px = k_dx[g->b.dir];
-        py = k_dy[g->b.dir];
+    for (y = 0; y < h; y++) {
+        for (x = 0; x < w; x++) {
+            pix[y * w + x] = LIPPUS_MAGENTA;
+        }
     }
-    gfx_fill_circle(x - 2, y - 2, 2, LIPPUS_WHITE);
-    gfx_fill_circle(x + 2, y - 2, 2, LIPPUS_WHITE);
+    for (y = 0; y < h; y++) {
+        int shift = (bob && y >= 10 && y <= 12) ? ((y & 1) ? 1 : -1) : 0;
+        for (x = 0; x < w; x++) {
+            int sx = x;
+            int sy = y;
+            int dx;
+            uint8_t idx;
+            if (dir == 1) {
+                sx = (w - 1) - x;
+            } else if (dir == 2 && w == h) {
+                sx = (h - 1) - y;
+                sy = x;
+            } else if (dir == 3 && w == h) {
+                sx = y;
+                sy = (w - 1) - x;
+            }
+            idx = src[sy * w + sx];
+            dx = x + shift;
+            if (idx == 0 || idx >= 32 || dx < 0 || dx >= w) {
+                continue;
+            }
+            pix[y * w + dx] = SCI_FI_PALETTE_32[idx];
+        }
+    }
+    gfx_blit(x0, y0, w, h, pix, 1, LIPPUS_MAGENTA);
+}
+
+static void draw_bot(int x, int y, int dir, int open) {
+    const uint8_t *spr = open ? (const uint8_t *)SPR_BOT_EAT : (const uint8_t *)SPR_BOT_IDLE;
+    blit_indexed(x - 8, y - 8, 16, 16, spr, face_of(dir), 0);
+}
+
+static const uint8_t *drone_spr(int index, int scared, int eyes) {
+    if (eyes) {
+        return (const uint8_t *)SPR_DRONE_CORE_ONLY;
+    }
     if (scared) {
-        gfx_fill_rect(x - 4, y + 2, 2, 2, LIPPUS_WHITE);
-        gfx_fill_rect(x + 2, y + 2, 2, 2, LIPPUS_WHITE);
-    } else {
-        gfx_fill_circle(x - 2 + px, y - 2 + py, 1, LIPPUS_BLUE);
-        gfx_fill_circle(x + 2 + px, y - 2 + py, 1, LIPPUS_BLUE);
+        return (const uint8_t *)SPR_DRONE_GLITCH;
     }
+    if (index == 1) {
+        return (const uint8_t *)SPR_DRONE_VIOLET;
+    }
+    if (index == 2) {
+        return (const uint8_t *)SPR_DRONE_CYAN;
+    }
+    if (index == 3) {
+        return (const uint8_t *)SPR_DRONE_AMBER;
+    }
+    return (const uint8_t *)SPR_DRONE_RED;
+}
+
+static void draw_drone(const ghost_t *g, int index, int scared) {
+    int bob = 0;
+    if (scared && g_fright < g_flash_from && ((g_fright / 8) & 1)) {
+        return;
+    }
+    if (!g->eyes && g->b.dir >= 0 && (g_frame & 4)) {
+        bob = 1;
+    }
+    blit_indexed(g->b.x - 8, g->b.y - 8, 16, 16, drone_spr(index, scared, g->eyes), 0, bob);
+}
+
+static void draw_canister(int x, int y) {
+    gfx_fill_rect(x - 3, y - 4, 6, 8, SCI_FI_PALETTE_32[9]);
+    gfx_fill_rect(x - 2, y - 3, 4, 6, SCI_FI_PALETTE_32[17]);
+    gfx_fill_rect(x - 1, y - 6, 2, 2, SCI_FI_PALETTE_32[25]);
 }
 
 static void draw_maze(void) {
-    const uint16_t wall = LIPPUS_RGB(24, 24, 210);
-    const uint16_t door = LIPPUS_RGB(255, 160, 200);
+    const uint16_t wall = LIPPUS_RGB(22, 128, 96);
+    const uint16_t door = LIPPUS_RGB(214, 140, 48);
     for (int r = 0; r < ROWS; r++) {
         int c = 0;
         while (c < COLS) {
@@ -967,10 +991,10 @@ static void draw_maze(void) {
             int y = g_oy + r * TILE;
             uint8_t tile = g_map[r][c];
             if (tile == T_DOT) {
-                gfx_fill_rect(x + 3, y + 3, 2, 2, LIPPUS_CREAM);
+                blit_indexed(x, y, 8, 8, (const uint8_t *)SPR_ENERGY_CELL_8, 0, 0);
             } else if (tile == T_POWER) {
                 if ((g_frame & 16) == 0) {
-                    gfx_fill_circle(x + 4, y + 4, 3, LIPPUS_CREAM);
+                    blit_indexed(x, y, 8, 8, (const uint8_t *)SPR_OVERDRIVE_CORE_8, 0, 0);
                 }
             } else if (tile == T_DOOR) {
                 gfx_fill_rect(x, y + 3, TILE, 2, door);
@@ -978,19 +1002,67 @@ static void draw_maze(void) {
         }
     }
     if (g_fruit > 0) {
-        int x = tile_x(g_fruit_c);
-        int y = tile_y(g_fruit_r);
-        uint16_t color = fruit_color();
-        if (g_level >= 11 && g_level <= 12) {
-            gfx_fill_rect(x - 3, y - 2, 7, 6, color);
-            gfx_fill_rect(x - 1, y - 5, 3, 3, color);
-        } else if (g_level >= 13) {
-            gfx_fill_rect(x - 1, y - 4, 2, 8, color);
-            gfx_fill_rect(x - 3, y - 4, 5, 2, color);
-        } else {
-            gfx_fill_circle(x, y, g_level >= 7 ? 4 : 3, color);
-            gfx_fill_rect(x, y - 6, 1, 3, LIPPUS_GREEN);
+        draw_canister(tile_x(g_fruit_c), tile_y(g_fruit_r));
+    }
+}
+
+static int magma_width(const char *s, int scale) {
+    int n = 0;
+    if (!s || scale < 1) {
+        return 0;
+    }
+    while (s[n]) {
+        n++;
+    }
+    return n * 9 * scale;
+}
+
+static uint16_t magma_shade(uint16_t c) {
+    int r = ((c >> 11) & 31) * 3 / 5;
+    int g = ((c >> 5) & 63) * 3 / 5;
+    int b = (c & 31) * 3 / 5;
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+static void magma_runs(int x, int y, uint8_t bits, int scale, uint16_t color) {
+    int col = 0;
+    while (col < 8) {
+        int start;
+        if ((bits & (uint8_t)(0x80u >> col)) == 0) {
+            col++;
+            continue;
         }
+        start = col;
+        while (col < 8 && (bits & (uint8_t)(0x80u >> col)) != 0) {
+            col++;
+        }
+        gfx_fill_rect(x + start * scale, y, (col - start) * scale, scale, color);
+    }
+}
+
+static void magma_text(int x, int y, const char *str, uint16_t ink, int scale) {
+    uint16_t bot = magma_shade(ink);
+    uint16_t shadow = SCI_FI_PALETTE_32[3];
+    if (!str || scale < 1) {
+        return;
+    }
+    while (*str) {
+        unsigned char ch = (unsigned char)*str++;
+        const uint8_t *glyph;
+        int row;
+        if (ch >= 'a' && ch <= 'z') {
+            ch = (unsigned char)(ch - 32);
+        }
+        if (ch < 0x20 || ch > 0x7E) {
+            ch = '?';
+        }
+        glyph = FONT_MAGMA_8X8[ch - 0x20];
+        for (row = 0; row < 8; row++) {
+            uint16_t body = row < 4 ? ink : bot;
+            magma_runs(x + scale, y + (row + 1) * scale, glyph[row], scale, shadow);
+            magma_runs(x, y + row * scale, glyph[row], scale, body);
+        }
+        x += 9 * scale;
     }
 }
 
@@ -1008,19 +1080,141 @@ static void format_u(char *dst, unsigned value) {
     dst[used] = 0;
 }
 
+static void magma_cx(int y, const char *s, uint16_t col, int scale) {
+    int x = (gfx_width() - magma_width(s, scale)) / 2;
+    if (x < 0) {
+        x = 0;
+    }
+    magma_text(x, y, s, col, scale);
+}
+
+static int score_qualifies(int score) {
+    if (score <= 0) {
+        return 0;
+    }
+    if (g_score_n < SCORE_N) {
+        return 1;
+    }
+    return score > g_scores[g_score_n - 1].score;
+}
+
+static void scores_load(void) {
+    int got;
+    int i = 0;
+    g_score_n = 0;
+    got = sys_record_read(RECORD_NAME, g_rec, LIPPUS_RECORD_MAX - 1);
+    if (got <= 0) {
+        return;
+    }
+    if (got > (int)LIPPUS_RECORD_MAX - 1) {
+        got = (int)LIPPUS_RECORD_MAX - 1;
+    }
+    g_rec[got] = 0;
+    while (g_rec[i] && g_score_n < SCORE_N) {
+        int used = 0;
+        int score;
+        char a;
+        char b;
+        char c;
+        if (g_rec[i] == '\n' || g_rec[i] == '\r') {
+            i++;
+            continue;
+        }
+        if (i + 3 >= got) {
+            break;
+        }
+        a = g_rec[i];
+        b = g_rec[i + 1];
+        c = g_rec[i + 2];
+        if (a < 'A' || a > 'Z' || b < 'A' || b > 'Z' || c < 'A' || c > 'Z' || g_rec[i + 3] != ' ') {
+            while (g_rec[i] && g_rec[i] != '\n') {
+                i++;
+            }
+            continue;
+        }
+        score = 0;
+        i += 4;
+        while (g_rec[i] >= '0' && g_rec[i] <= '9' && used < 9) {
+            score = score * 10 + (g_rec[i] - '0');
+            i++;
+            used++;
+        }
+        if (used > 0 && score > 0) {
+            g_scores[g_score_n].name[0] = a;
+            g_scores[g_score_n].name[1] = b;
+            g_scores[g_score_n].name[2] = c;
+            g_scores[g_score_n].score = score;
+            g_score_n++;
+        }
+        while (g_rec[i] && g_rec[i] != '\n') {
+            i++;
+        }
+    }
+}
+
+static void scores_save(void) {
+    int n = 0;
+    int i;
+    for (i = 0; i < g_score_n; i++) {
+        char num[8];
+        int k;
+        if (n + 16 >= (int)LIPPUS_RECORD_MAX) {
+            break;
+        }
+        g_rec[n++] = g_scores[i].name[0];
+        g_rec[n++] = g_scores[i].name[1];
+        g_rec[n++] = g_scores[i].name[2];
+        g_rec[n++] = ' ';
+        format_u(num, (unsigned)g_scores[i].score);
+        for (k = 0; num[k]; k++) {
+            g_rec[n++] = num[k];
+        }
+        g_rec[n++] = '\n';
+    }
+    sys_record_write(RECORD_NAME, g_rec, n);
+}
+
+static void score_insert(int score) {
+    int at = g_score_n;
+    int last;
+    int i;
+    for (i = 0; i < g_score_n; i++) {
+        if (score > g_scores[i].score) {
+            at = i;
+            break;
+        }
+    }
+    if (at >= SCORE_N) {
+        g_rank = -1;
+        return;
+    }
+    last = g_score_n < SCORE_N ? g_score_n : SCORE_N - 1;
+    for (i = last; i > at; i--) {
+        g_scores[i] = g_scores[i - 1];
+    }
+    g_scores[at].name[0] = g_initials[0];
+    g_scores[at].name[1] = g_initials[1];
+    g_scores[at].name[2] = g_initials[2];
+    g_scores[at].score = score;
+    if (g_score_n < SCORE_N) {
+        g_score_n++;
+    }
+    g_rank = at;
+}
+
 static void draw_hud(void) {
     char score[8];
     char level[4];
     format_u(score, (unsigned)g_score);
     format_u(level, (unsigned)g_level);
-    gfx_text(8, 6, score, LIPPUS_CREAM, 1);
-    gfx_text(gfx_width() - 8 - gfx_text_width(level, 1), 6, level, LIPPUS_AMBER, 1);
+    magma_text(8, 6, score, LIPPUS_CREAM, 1);
+    magma_text(gfx_width() - 8 - magma_width(level, 1), 6, level, LIPPUS_AMBER, 1);
     int extras = g_lives - 1;
     if (extras < 0) {
         extras = 0;
     }
     for (int i = 0; i < extras; i++) {
-        gfx_fill_circle(16 + i * 14, gfx_height() - 14, 4, LIPPUS_YELLOW);
+        blit_indexed(4 + i * 18, gfx_height() - 20, 16, 16, (const uint8_t *)SPR_BOT_IDLE, 0, 0);
     }
 }
 
@@ -1031,43 +1225,201 @@ static void draw_world(void) {
     for (int i = 0; i < 4; i++) {
         ghost_t *g = &g_ghosts[i];
         int scared = g_fright > 0 && !g->eyes;
-        uint16_t color = k_ghost_col[i];
-        if (scared) {
-            int flash = g_fright < g_flash_from && ((g_fright / 8) & 1);
-            color = flash ? LIPPUS_WHITE : LIPPUS_RGB(40, 40, 200);
-        }
-        draw_ghost(g, color, scared);
+        draw_drone(g, i, scared);
         if (g->b.x - g_ox < 8) {
             body_t copy = g->b;
             g->b.x += span;
-            draw_ghost(g, color, scared);
+            draw_drone(g, i, scared);
             g->b = copy;
         }
     }
     int open = g_pac.dir < 0 ? 0 : ((g_frame / 4) % 3);
-    draw_pac(g_pac.x, g_pac.y, g_pac.dir, open);
+    draw_bot(g_pac.x, g_pac.y, g_pac.dir, open);
     if (g_pac.x - g_ox < 8) {
-        draw_pac(g_pac.x + span, g_pac.y, g_pac.dir, open);
+        draw_bot(g_pac.x + span, g_pac.y, g_pac.dir, open);
     }
     if (g_state == ST_EAT) {
         char pts[8];
         format_u(pts, (unsigned)g_eat_pts);
-        gfx_text(g_eat_x, g_eat_y, pts, LIPPUS_CYAN, 1);
+        magma_text(g_eat_x, g_eat_y, pts, LIPPUS_CYAN, 1);
     }
     if (g_fruit_banner > 0) {
         char pts[8];
         format_u(pts, (unsigned)g_fruit_pts);
-        gfx_text(g_fruit_bx - gfx_text_width(pts, 1) / 2, g_fruit_by - 10, pts, LIPPUS_CREAM, 1);
+        magma_text(g_fruit_bx - magma_width(pts, 1) / 2, g_fruit_by - 10, pts, LIPPUS_CREAM, 1);
     }
     draw_hud();
     if (g_state == ST_READY) {
-        gfx_text((gfx_width() - gfx_text_width("PRONTO", 2)) / 2, g_oy + 17 * TILE, "PRONTO",
-                 LIPPUS_YELLOW, 2);
+        magma_cx(g_oy + 17 * TILE, "READY", LIPPUS_YELLOW, 2);
     } else if (g_state == ST_OVER) {
-        gfx_text((gfx_width() - gfx_text_width("FINE", 2)) / 2, g_oy + 14 * TILE, "FINE", LIPPUS_RED, 2);
-        gfx_text((gfx_width() - gfx_text_width("A NUOVA", 1)) / 2, g_oy + 17 * TILE, "A NUOVA",
-                 LIPPUS_CREAM, 1);
+        magma_cx(g_oy + 14 * TILE, "GAME OVER", LIPPUS_RED, 2);
     }
+}
+
+static void draw_press_start(void) {
+    if ((g_frame & 16) == 0) {
+        magma_cx(gfx_height() - 18, "PRESS START", LIPPUS_YELLOW, 1);
+    }
+}
+
+static void draw_slide_dots(int page) {
+    int i;
+    int x0 = gfx_width() / 2 - SLIDE_HOW * 5;
+    for (i = 0; i < SLIDE_HOW; i++) {
+        gfx_fill_rect(x0 + i * 10, 276, 4, 4, i == page ? LIPPUS_YELLOW : LIPPUS_RGB(70, 78, 96));
+    }
+}
+
+static void draw_how(int page) {
+    int open = (g_frame / 8) & 1;
+    gfx_clear(LIPPUS_BLACK);
+    if (page == 0) {
+        int i;
+        magma_cx(20, "SCAVENGER", LIPPUS_AMBER, 2);
+        draw_bot(64, 130, DIR_RIGHT, open);
+        for (i = 0; i < 3; i++) {
+            blit_indexed(108 + i * 28, 122, 8, 8, (const uint8_t *)SPR_ENERGY_CELL_8, 0, 0);
+        }
+        magma_cx(200, "STICK STEERS", LIPPUS_CREAM, 1);
+        magma_cx(218, "COLLECT EVERY CELL", LIPPUS_CREAM, 1);
+    } else if (page == 1) {
+        magma_cx(28, "OVERDRIVE CORE", LIPPUS_AMBER, 1);
+        blit_indexed(48, 116, 8, 8, (const uint8_t *)SPR_OVERDRIVE_CORE_8, 0, 0);
+        blit_indexed(120, 108, 16, 16, (const uint8_t *)SPR_DRONE_GLITCH, 0, open);
+        magma_cx(200, "STUNS THE DRONES", LIPPUS_CREAM, 1);
+        magma_cx(218, "EAT THEM FOR POINTS", LIPPUS_CREAM, 1);
+    } else {
+        magma_cx(28, "A CORE FLIES HOME", LIPPUS_AMBER, 1);
+        blit_indexed(56, 112, 16, 16, (const uint8_t *)SPR_DRONE_CORE_ONLY, 0, 0);
+        blit_indexed(132, 108, 16, 16, (const uint8_t *)SPR_DRONE_RED, 0, open);
+        magma_cx(200, "THEN THE DRONE RETURNS", LIPPUS_CREAM, 1);
+        magma_cx(218, "YOU HAVE THREE LIVES", LIPPUS_CREAM, 1);
+    }
+    draw_slide_dots(page);
+    draw_press_start();
+}
+
+static void draw_score_row(int x, int y, int rank, const score_t *row, uint16_t color) {
+    char pos[4];
+    char name[4];
+    char num[8];
+    format_u(pos, (unsigned)(rank + 1));
+    name[0] = row->name[0];
+    name[1] = row->name[1];
+    name[2] = row->name[2];
+    name[3] = 0;
+    format_u(num, (unsigned)row->score);
+    magma_text(x, y, pos, color, 1);
+    magma_text(x + 22, y, name, color, 1);
+    magma_text(x + 112 - magma_width(num, 1), y, num, color, 1);
+}
+
+static void draw_scores(void) {
+    int i;
+    gfx_clear(LIPPUS_BLACK);
+    magma_cx(8, "TOP 20", LIPPUS_AMBER, 2);
+    if (g_score_n == 0) {
+        magma_cx(140, "NO SCORES YET", LIPPUS_CREAM, 1);
+    } else {
+        for (i = 0; i < g_score_n; i++) {
+            uint16_t color = (i == g_rank) ? LIPPUS_YELLOW : LIPPUS_CREAM;
+            int col = i / 10;
+            int row = i % 10;
+            draw_score_row(4 + col * 120, 40 + row * 16, i, &g_scores[i], color);
+        }
+    }
+    draw_press_start();
+}
+
+static void draw_attract(void) {
+    if (g_attract_page >= SLIDE_HOW) {
+        draw_scores();
+    } else {
+        draw_how(g_attract_page);
+    }
+}
+
+static void draw_name(void) {
+    char num[8];
+    int i;
+    gfx_clear(LIPPUS_BLACK);
+    format_u(num, (unsigned)g_score);
+    magma_cx(36, "NEW HIGH SCORE", LIPPUS_AMBER, 1);
+    magma_cx(60, num, LIPPUS_CREAM, 2);
+    magma_cx(96, "YOUR NAME", LIPPUS_CREAM, 1);
+    for (i = 0; i < 3; i++) {
+        char one[2];
+        one[0] = g_initials[i];
+        one[1] = 0;
+        magma_text(84 + i * 24, 128, one, LIPPUS_YELLOW, 2);
+        if (i == g_name_i && (g_frame & 8) == 0) {
+            gfx_fill_rect(84 + i * 24, 150, 16, 2, LIPPUS_YELLOW);
+        }
+    }
+    magma_cx(180, "UP DOWN", LIPPUS_CREAM, 1);
+    magma_cx(198, "LEFT RIGHT", LIPPUS_CREAM, 1);
+    magma_cx(216, "A ENTERS", LIPPUS_CREAM, 1);
+}
+
+static void tick_name(const lippus_pad_t *pad) {
+    int move = 0;
+    if (pad_pressed(pad, LIPPUS_UP)) {
+        move = 1;
+    } else if (pad_pressed(pad, LIPPUS_DOWN)) {
+        move = -1;
+    }
+    if (move == 0 && (pad_held(pad, LIPPUS_UP) || pad_held(pad, LIPPUS_DOWN))) {
+        if (++g_letter_hold > 10 && (g_letter_hold & 3) == 0) {
+            move = pad_held(pad, LIPPUS_UP) ? 1 : -1;
+        }
+    } else {
+        g_letter_hold = 0;
+    }
+    if (move != 0) {
+        char ch = (char)(g_initials[g_name_i] + move);
+        if (ch < 'A') {
+            ch = 'Z';
+        }
+        if (ch > 'Z') {
+            ch = 'A';
+        }
+        g_initials[g_name_i] = ch;
+    }
+    if (pad_pressed(pad, LIPPUS_LEFT) && g_name_i > 0) {
+        g_name_i--;
+    }
+    if (pad_pressed(pad, LIPPUS_RIGHT) && g_name_i < 2) {
+        g_name_i++;
+    }
+    if (pad_pressed(pad, LIPPUS_A) || pad_pressed(pad, LIPPUS_START)) {
+        score_insert(g_score);
+        scores_save();
+        g_attract_page = SLIDE_HOW;
+        g_attract_t = 0;
+        g_state = ST_ATTRACT;
+    }
+}
+
+static void enter_attract(int page) {
+    g_state = ST_ATTRACT;
+    g_attract_page = page;
+    g_attract_t = 0;
+    quiet();
+}
+
+static void enter_name(void) {
+    g_initials[0] = 'A';
+    g_initials[1] = 'A';
+    g_initials[2] = 'A';
+    g_name_i = 0;
+    g_letter_hold = 0;
+    g_state = ST_NAME;
+}
+
+static void enter_game_over(void) {
+    quiet();
+    g_state = ST_OVER;
+    g_timer = 90;
 }
 
 static void enter_ready(void) {
@@ -1094,18 +1446,61 @@ static void new_game(void) {
 void lippus_main(void) {
     g_ox = (gfx_width() - COLS * TILE) / 2;
     g_oy = 24;
-    new_game();
+    g_rank = -1;
+    scores_load();
+    enter_attract(0);
     for (;;) {
         lippus_pad_t pad = pad_poll();
         g_frame++;
         if (g_fruit_banner > 0) {
             g_fruit_banner--;
         }
+        if (g_state == ST_ATTRACT) {
+            if (pad_pressed(&pad, LIPPUS_START) || pad_pressed(&pad, LIPPUS_A)) {
+                g_rank = -1;
+                new_game();
+            } else {
+                int hold = g_attract_page >= SLIDE_HOW ? SCORE_HOLD : SLIDE_LEN;
+                if (pad_pressed(&pad, LIPPUS_LEFT)) {
+                    g_attract_page = (g_attract_page + SLIDE_N - 1) % SLIDE_N;
+                    g_attract_t = 0;
+                } else if (pad_pressed(&pad, LIPPUS_RIGHT)) {
+                    g_attract_page = (g_attract_page + 1) % SLIDE_N;
+                    g_attract_t = 0;
+                } else if (++g_attract_t >= hold) {
+                    g_attract_t = 0;
+                    g_attract_page++;
+                    if (g_attract_page >= SLIDE_N) {
+                        g_attract_page = 0;
+                    }
+                }
+                draw_attract();
+            }
+            gfx_present();
+            sys_frame(33);
+            continue;
+        }
+        if (g_state == ST_NAME) {
+            tick_name(&pad);
+            if (g_state == ST_NAME) {
+                draw_name();
+            } else {
+                draw_attract();
+            }
+            gfx_present();
+            sys_frame(33);
+            continue;
+        }
         if (g_state == ST_OVER) {
             draw_world();
             gfx_present();
-            if (pad_pressed(&pad, LIPPUS_A) || pad_pressed(&pad, LIPPUS_START)) {
-                new_game();
+            if (--g_timer <= 0) {
+                if (score_qualifies(g_score)) {
+                    enter_name();
+                } else {
+                    g_rank = -1;
+                    enter_attract(SLIDE_HOW);
+                }
             }
             sys_frame(33);
             continue;
@@ -1124,8 +1519,7 @@ void lippus_main(void) {
                 if (g_lives > 0) {
                     enter_ready();
                 } else {
-                    g_state = ST_OVER;
-                    quiet();
+                    enter_game_over();
                 }
             }
         } else if (g_state == ST_WIN) {
@@ -1135,8 +1529,6 @@ void lippus_main(void) {
                 enter_ready();
             }
         } else {
-            int before_x = g_pac.x;
-            int before_y = g_pac.y;
             read_stick(&pad);
             {
                 int steps = take_pixels(&g_pac_acc, pac_pct(g_chewing));
@@ -1176,10 +1568,6 @@ void lippus_main(void) {
                         }
                         collide();
                     }
-                }
-                if (g_state == ST_PLAY) {
-                    int moved = g_pac.x != before_x || g_pac.y != before_y;
-                    audio_play(moved);
                 }
             }
         }
