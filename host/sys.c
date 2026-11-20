@@ -184,6 +184,7 @@ void host_bind_api(int width, int height) {
     api.tune = host_tune;
     api.record_read = host_record_read;
     api.record_write = host_record_write;
+    api.play = host_play;
     g_lippus_api = &api;
     host_gfx_init(width, height);
 }

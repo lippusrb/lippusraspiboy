@@ -4,6 +4,7 @@
 #include "font.h"
 #include "lippus/gfx.h"
 
+#include "hardware/clocks.h"
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/spi.h"
@@ -30,6 +31,7 @@ static volatile int frame_w;
 static volatile int frame_h;
 
 static void present_core(void);
+static void hold_lcd_reset(void);
 
 /* Il disegno aspetta la fine dell'invio: un solo framebuffer. */
 static void fb_wait(void) {
@@ -93,11 +95,11 @@ static void lcd_init_panel(void) {
     static const uint8_t zero[] = {0x00};
     static const uint8_t gamma_on[] = {0x01};
 
-    gpio_put(LIPPUS_PIN_LCD_RST, 1);
+    hold_lcd_reset();
     sleep_ms(5);
     gpio_put(LIPPUS_PIN_LCD_RST, 0);
     sleep_ms(20);
-    gpio_put(LIPPUS_PIN_LCD_RST, 1);
+    hold_lcd_reset();
     sleep_ms(120);
 
     lcd_cmd(0x01);
@@ -124,20 +126,27 @@ static void lcd_init_panel(void) {
     panel_ready = 1;
 }
 
-/* 12 mA e fronti rapidi servono a 62.5 MHz sulle piste corte. Sulla
-   breadboard quegli stessi fronti si accoppiano sul reset del pannello:
-   il primo quadro si vede, poi il controllore si azzera e resta bianco. */
+/* Il reset va tenuto alto con forza, cosi' un fronte dello SPI non lo fa scattare. */
+static void hold_lcd_reset(void) {
+    gpio_set_drive_strength(LIPPUS_PIN_LCD_RST, GPIO_DRIVE_STRENGTH_12MA);
+    gpio_set_slew_rate(LIPPUS_PIN_LCD_RST, GPIO_SLEW_RATE_SLOW);
+    gpio_put(LIPPUS_PIN_LCD_RST, 1);
+}
+
 static void drive_lcd(uint pin) {
-    if (LIPPUS_LCD_BAUD >= 40000000u) {
-        gpio_set_drive_strength(pin, GPIO_DRIVE_STRENGTH_12MA);
-        gpio_set_slew_rate(pin, GPIO_SLEW_RATE_FAST);
-    } else {
-        gpio_set_drive_strength(pin, GPIO_DRIVE_STRENGTH_4MA);
-        gpio_set_slew_rate(pin, GPIO_SLEW_RATE_SLOW);
-    }
+    /* 4 mA e fronte lento. A 12 mA il fronte fa scattare il reset e lo schermo resta bianco. */
+    gpio_set_drive_strength(pin, GPIO_DRIVE_STRENGTH_4MA);
+    gpio_set_slew_rate(pin, GPIO_SLEW_RATE_SLOW);
 }
 
 void gfx_init(void) {
+    if (set_sys_clock_khz(LIPPUS_SYS_CLOCK_KHZ, false)) {
+        /* Altrimenti i periferici restano sul clock USB a 48 MHz e lo
+           schermo va a 24 MHz: ogni gioco diventa lento. */
+        clock_configure_undivided(clk_peri, 0,
+                                  CLOCKS_CLK_PERI_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
+                                  LIPPUS_SYS_CLOCK_KHZ * 1000u);
+    }
     clip_full();
     gpio_init(LIPPUS_PIN_LCD_CS);
     gpio_set_dir(LIPPUS_PIN_LCD_CS, GPIO_OUT);
@@ -146,7 +155,7 @@ void gfx_init(void) {
     gpio_set_dir(LIPPUS_PIN_LCD_DC, GPIO_OUT);
     gpio_init(LIPPUS_PIN_LCD_RST);
     gpio_set_dir(LIPPUS_PIN_LCD_RST, GPIO_OUT);
-    gpio_put(LIPPUS_PIN_LCD_RST, 1);
+    hold_lcd_reset();
 
     spi_init(spi0, LIPPUS_LCD_BAUD);
     gpio_set_function(LIPPUS_PIN_LCD_SCK, GPIO_FUNC_SPI);
@@ -337,14 +346,72 @@ void lippus_gfx_blit(int x, int y, int w, int h, const uint16_t *pixels, int use
     if (!pixels || w <= 0 || h <= 0 || w > 1024 || h > 1024) {
         return;
     }
-    for (int row = 0; row < h; row++) {
-        const uint16_t *src = pixels + (size_t)row * (size_t)w;
-        for (int col = 0; col < w; col++) {
-            uint16_t pixel = src[col];
-            if (use_key && pixel == key) {
-                continue;
+    int x0 = x;
+    int y0 = y;
+    int x1 = x + w;
+    int y1 = y + h;
+    int cx0 = clip_x;
+    int cy0 = clip_y;
+    int cx1 = clip_x + clip_w;
+    int cy1 = clip_y + clip_h;
+    if (cx0 < 0) {
+        cx0 = 0;
+    }
+    if (cy0 < 0) {
+        cy0 = 0;
+    }
+    if (cx1 > screen_w) {
+        cx1 = screen_w;
+    }
+    if (cy1 > screen_h) {
+        cy1 = screen_h;
+    }
+    if (x0 < cx0) {
+        x0 = cx0;
+    }
+    if (y0 < cy0) {
+        y0 = cy0;
+    }
+    if (x1 > cx1) {
+        x1 = cx1;
+    }
+    if (y1 > cy1) {
+        y1 = cy1;
+    }
+    if (x0 >= x1 || y0 >= y1) {
+        return;
+    }
+    int src_x = x0 - x;
+    int src_y = y0 - y;
+    fb_wait();
+    for (int row = y0; row < y1; row++) {
+        const uint16_t *src =
+            pixels + (size_t)(src_y + (row - y0)) * (size_t)w + (size_t)src_x;
+        uint16_t *dst = fb + (size_t)row * (size_t)screen_w + (size_t)x0;
+        int n = x1 - x0;
+        if (!use_key) {
+            if (((uintptr_t)dst & 2u) && n) {
+                *dst++ = swap16(*src++);
+                n--;
             }
-            lippus_gfx_pixel(x + col, y + row, pixel);
+            while (n >= 2) {
+                uint16_t a = swap16(*src++);
+                uint16_t b = swap16(*src++);
+                *(uint32_t *)dst = (uint32_t)a | ((uint32_t)b << 16);
+                dst += 2;
+                n -= 2;
+            }
+            if (n) {
+                *dst = swap16(*src);
+            }
+        } else {
+            while (n--) {
+                uint16_t pixel = *src++;
+                if (pixel != key) {
+                    *dst = swap16(pixel);
+                }
+                dst++;
+            }
         }
     }
 }
@@ -428,6 +495,7 @@ void lippus_gfx_clip(int x, int y, int w, int h) {
 }
 
 static void send_frame(int w, int h) {
+    hold_lcd_reset();
     lcd_window(0, 0, w, h);
     while (spi_is_busy(spi0)) {
     }
@@ -528,7 +596,9 @@ void lippus_gfx_orientation(unsigned mode) {
     if (!panel_ready) {
         return;
     }
-    lcd_write(0x36, &panel_madctl, 1);
+    /* Init intera, non solo il MADCTL: se il pannello si era azzerato
+       (schermo bianco) SELECT lo riporta in vita senza spegnere la console. */
+    lcd_init_panel();
     lippus_gfx_clear(LIPPUS_BLACK);
     lippus_gfx_present();
 }

@@ -34,6 +34,20 @@ static uint8_t tune_wave;
 static uint8_t tune_volume;
 static uint8_t tune_on;
 
+static const int8_t *pcm_data;
+static uint16_t pcm_count;
+static uint16_t pcm_pos;
+static uint8_t pcm_volume;
+
+static int pcm_sample(void) {
+    int sample;
+    if (!pcm_data || pcm_pos >= pcm_count) {
+        return 0;
+    }
+    sample = pcm_data[pcm_pos++];
+    return (sample * (int)pcm_volume) >> 8;
+}
+
 static uint32_t hz_to_inc(uint16_t hz) {
     if (hz > HZ_MAX) {
         hz = HZ_MAX;
@@ -144,6 +158,7 @@ static int mix_one(void) {
     for (unsigned i = 0; i < SND_VOICES; i++) {
         mix += voice_sample(&voices[i]);
     }
+    mix += pcm_sample();
     if (mix > 127) {
         mix = 127;
     }
@@ -241,5 +256,18 @@ void host_tune(uint8_t voice, uint8_t wave, uint8_t volume, const lippus_note_t 
     tune_wave = wave;
     tune_volume = volume;
     tune_on = 1;
+    os_unfair_lock_unlock(&audio_lock);
+}
+
+void host_play(const int8_t *pcm, uint16_t count, uint8_t volume) {
+    os_unfair_lock_lock(&audio_lock);
+    pcm_data = 0;
+    pcm_pos = 0;
+    pcm_count = 0;
+    if (pcm && count > 0 && volume > 0) {
+        pcm_volume = volume;
+        pcm_count = count;
+        pcm_data = pcm;
+    }
     os_unfair_lock_unlock(&audio_lock);
 }

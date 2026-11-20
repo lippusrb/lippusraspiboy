@@ -233,7 +233,11 @@ bool loader_launch(const game_info_t *game) {
 
     typedef void (*game_fn)(const lippus_api_t *);
     game_fn entry = (game_fn)(uintptr_t)hdr.entry;
+    /* Il gioco confronta la versione con quella compilata dentro. I campi
+       aggiunti dopo restano in coda e un gioco vecchio non li legge. */
+    lippus_api_set_version(hdr.api_version);
     lippus_enter_game(entry);
+    lippus_api_set_version(LIPPUS_API_VERSION);
 
     lippus_tone(0);
     lippus_gfx_clip(0, 0, 0, 0);

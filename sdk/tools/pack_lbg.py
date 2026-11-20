@@ -5,7 +5,7 @@ import argparse
 import struct
 import sys
 
-API_VERSION = 3  # uguale a LIPPUS_API_VERSION in sdk/include/lippus/layout.h
+API_VERSION = 4  # uguale a LIPPUS_API_VERSION in sdk/include/lippus/layout.h
 HEADER_BYTES = 64
 EXPECT_MAGIC = b"LBG1"
 LBG_FLAG_PORTRAIT = 1

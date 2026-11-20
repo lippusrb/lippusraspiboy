@@ -37,6 +37,7 @@ static lippus_api_t s_api = {
     .tune = lippus_tune,
     .record_read = lippus_record_read,
     .record_write = lippus_record_write,
+    .play = lippus_play,
 };
 
 const lippus_api_t *lippus_api_table(void) { return &s_api; }
@@ -45,6 +46,8 @@ void lippus_api_set_size(uint16_t width, uint16_t height) {
     s_api.width = width;
     s_api.height = height;
 }
+
+void lippus_api_set_version(uint32_t version) { s_api.version = version; }
 
 uint32_t lippus_ticks(void) { return (uint32_t)(time_us_64() / 1000u); }
 

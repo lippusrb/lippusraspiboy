@@ -33,6 +33,7 @@ int lippus_gfx_height(void);
 void gfx_pause_for_flash(void);
 void gfx_resume_after_flash(void);
 void lippus_api_set_size(uint16_t width, uint16_t height);
+void lippus_api_set_version(uint32_t version);
 
 void pad_init(void);
 uint16_t pad_raw(void);
@@ -44,6 +45,7 @@ void lippus_tone(uint16_t hz);
 void lippus_sound(uint8_t voice, uint8_t wave, uint16_t hz, uint8_t volume, uint16_t ms);
 void lippus_tune(uint8_t voice, uint8_t wave, uint8_t volume, const lippus_note_t *notes,
                  uint16_t count);
+void lippus_play(const int8_t *pcm, uint16_t count, uint8_t volume);
 
 uint32_t lippus_ticks(void);
 void lippus_sleep(uint32_t ms);

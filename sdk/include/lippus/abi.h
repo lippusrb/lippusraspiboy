@@ -61,6 +61,9 @@ typedef struct lippus_api {
        Al massimo LIPPUS_RECORD_MAX byte. La cartella si crea da sola. */
     int (*record_read)(const char *name, void *dst, uint32_t cap);
     int (*record_write)(const char *name, const void *src, uint32_t len);
+    /* Campione 8 bit con segno, un colpo solo. count == 0 lo interrompe.
+       Si somma alle quattro voci. Un nuovo play taglia quello in corso. */
+    void (*play)(const int8_t *pcm, uint16_t count, uint8_t volume);
 } lippus_api_t;
 
 #define LIPPUS_RECORD_MAX 512u

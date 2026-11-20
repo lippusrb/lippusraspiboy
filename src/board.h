@@ -28,9 +28,11 @@
 #define LIPPUS_PIN_START 21
 #define LIPPUS_PIN_SELECT 22
 
-/* 62.5 MHz e' il massimo utile del SPI del RP2040. Se l'immagine trema
-   sulla breadboard, abbassa questo valore a 31250000 o 15625000. */
-#define LIPPUS_LCD_BAUD 62500000u
+/* 200 MHz di sistema, SPI a 50. A 62.5 i fronti da 12 mA azzerano il
+   pannello; a 31.25 il quadro non entra in 33 ms. 50 ci sta, coi fronti
+   lenti da 4 mA. Se il clock non sale, lo SPI ricade a 31.25. */
+#define LIPPUS_SYS_CLOCK_KHZ 200000u
+#define LIPPUS_LCD_BAUD 50000000u
 #define LIPPUS_SD_BAUD_INIT 400000u
 #define LIPPUS_SD_BAUD_RUN 12500000u
 

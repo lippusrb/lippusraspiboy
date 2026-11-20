@@ -41,6 +41,20 @@ static uint8_t tune_wave;
 static uint8_t tune_volume;
 static uint8_t tune_on;
 
+static const int8_t *pcm_data;
+static uint16_t pcm_count;
+static uint16_t pcm_pos;
+static uint8_t pcm_volume;
+
+static int pcm_sample(void) {
+    int sample;
+    if (!pcm_data || pcm_pos >= pcm_count) {
+        return 0;
+    }
+    sample = pcm_data[pcm_pos++];
+    return (sample * (int)pcm_volume) >> 8;
+}
+
 static uint32_t hz_to_inc(uint16_t hz) {
     if (hz > HZ_MAX) {
         hz = HZ_MAX;
@@ -153,6 +167,7 @@ static bool mix_samples(repeating_timer_t *timer) {
     for (unsigned i = 0; i < SND_VOICES; i++) {
         mix += voice_sample(&voices[i]);
     }
+    mix += pcm_sample();
     if (mix > 127) {
         mix = 127;
     }
@@ -225,5 +240,18 @@ void lippus_tune(uint8_t voice, uint8_t wave, uint8_t volume, const lippus_note_
     tune_wave = wave;
     tune_volume = volume;
     tune_on = 1;
+    restore_interrupts(irq);
+}
+
+void lippus_play(const int8_t *pcm, uint16_t count, uint8_t volume) {
+    uint32_t irq = save_and_disable_interrupts();
+    pcm_data = 0;
+    pcm_pos = 0;
+    pcm_count = 0;
+    if (pcm && count > 0 && volume > 0) {
+        pcm_volume = volume;
+        pcm_count = count;
+        pcm_data = pcm;
+    }
     restore_interrupts(irq);
 }

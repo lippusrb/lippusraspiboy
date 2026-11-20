@@ -112,7 +112,8 @@ static int fill_game(game_info_t *game, const fat_dirent_t *ent) {
     uint32_t max_payload = PICO_FLASH_SIZE_BYTES - LIPPUS_OS_FLASH_LIMIT - LIPPUS_INSTALL_RESERVE;
     if (hdr.header_bytes < 64 || hdr.header_bytes > 1024) {
         game->reason = GAME_BAD_MAGIC;
-    } else if (hdr.api_version != LIPPUS_API_VERSION) {
+    } else if (hdr.api_version < LIPPUS_API_MIN_VERSION ||
+               hdr.api_version > LIPPUS_API_VERSION) {
         game->reason = GAME_BAD_API;
     } else if (hdr.load_addr != LIPPUS_GAME_FLASH_ORIGIN) {
         game->reason = GAME_BAD_LOAD;

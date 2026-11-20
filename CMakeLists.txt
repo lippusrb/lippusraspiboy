@@ -86,3 +86,5 @@ lippus_add_game(garden_defender DISPLAY_NAME "Garden Defender" SOURCES games/gar
 lippus_add_game(saloon DISPLAY_NAME "Saloon" SOURCES games/saloon/main.c)
 lippus_add_game(lippus_bounce DISPLAY_NAME "Lippus Bounce" SOURCES games/lippus_bounce/main.c)
 lippus_add_game(lippus_breaker DISPLAY_NAME "Lippus Breaker" SOURCES games/lippus_breaker/main.c)
+lippus_add_game(skyward DISPLAY_NAME "Skyward Climb" SOURCES games/skyward/main.c)
+lippus_add_game(incursore DISPLAY_NAME "Incursore" SOURCES games/incursore/main.c)

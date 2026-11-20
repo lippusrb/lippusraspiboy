@@ -6,7 +6,10 @@
    tools/check_layout.py verifica che questi numeri restino allineati
    a sdk/linker/game.ld e al defsym della RAM in CMakeLists.txt. */
 
-#define LIPPUS_API_VERSION 3u
+#define LIPPUS_API_VERSION 4u
+/* I campi nuovi stanno solo in coda. I giochi dal 2 in poi restano avviabili:
+   il firmware dichiara a ciascuno la versione con cui e' stato impacchettato. */
+#define LIPPUS_API_MIN_VERSION 2u
 
 #define LIPPUS_SCREEN_W 320
 #define LIPPUS_SCREEN_H 240

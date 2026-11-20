@@ -25,6 +25,7 @@ void host_audio_init(void);
 void host_tone(uint16_t hz);
 void host_sound(uint8_t voice, uint8_t wave, uint16_t hz, uint8_t volume, uint16_t ms);
 void host_tune(uint8_t voice, uint8_t wave, uint8_t volume, const lippus_note_t *notes, uint16_t count);
+void host_play(const int8_t *pcm, uint16_t count, uint8_t volume);
 
 void host_window_open(const char *title, int width, int height);
 void host_window_present(void);

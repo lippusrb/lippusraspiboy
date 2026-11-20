@@ -29,3 +29,8 @@ static inline void snd_tune(unsigned voice, unsigned wave, unsigned volume,
     lippus_api()->tune((uint8_t)voice, (uint8_t)wave, (uint8_t)volume, notes,
                        (uint16_t)count);
 }
+
+/* Riproduce pcm (8 bit con segno) una volta. Non occupa una voce. */
+static inline void snd_play(const int8_t *pcm, unsigned count, unsigned volume) {
+    lippus_api()->play(pcm, (uint16_t)count, (uint8_t)volume);
+}
