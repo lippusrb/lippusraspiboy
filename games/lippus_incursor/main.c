@@ -1,8 +1,11 @@
 #include "lippus.h"
 #include "lippus/sfx.h"
 
+#include <stddef.h>
+
 #include "assets.h"
 #include "rooms.h"
+#include "campaign.h"
 
 /* Incursore contro l'Egemonia. Stanze 20x14, una schermata ciascuna.
    A spara, B blocca la mira, X apre o sfiata, Y granata, click lama.
@@ -92,6 +95,8 @@
 #define ST_DECK 6
 #define ST_WIN 7
 #define ST_SLOT 8
+#define ST_CRAWL 9
+#define ST_LANG 10
 
 #define SAVE_SLOTS 8
 
@@ -100,6 +105,7 @@
 #define MAX_PICK 6
 #define MAX_MINE 4
 #define MAX_BAR 4
+#define MAX_CRATE 3
 #define MAX_VENT 8
 #define MAX_CRUSH 2
 #define MAX_FX 6
@@ -108,7 +114,7 @@
 typedef struct {
     uint8_t on, kind, tmpl, dist;
     uint8_t door[4];
-    uint8_t visited, cleared, looted;
+    uint8_t visited, cleared, looted, keyed, trick;
 } Room;
 
 typedef struct {
@@ -133,6 +139,10 @@ typedef struct {
 } Barrel;
 
 typedef struct {
+    int x, y, hx, hy, gx, gy, secret, on;
+} Crate;
+
+typedef struct {
     int tx, ty, dir, on;
 } Vent;
 
@@ -148,6 +158,7 @@ typedef struct __attribute__((packed)) {
     char magic[4];
     uint16_t data;
     uint8_t hp_rank, heat_rank, dot_rank, unlocks;
+    uint8_t lang;
 } Meta;
 
 /* Formato precedente, un solo slot dentro INCURSOR. Si legge solo per migrarlo. */
@@ -178,19 +189,62 @@ typedef struct __attribute__((packed)) {
     uint8_t visited[8];
     uint8_t cleared[8];
     uint8_t looted[8];
+} SlotV1;
+
+typedef struct __attribute__((packed)) {
+    char magic[4];
+    uint8_t deck, rx, ry, face, weapon;
+    uint8_t hp, sp, grenades, has_key, over;
+    uint8_t ammo_s, ammo_y, heat, key_used, held;
+    uint16_t px, py;
+    uint32_t seed;
+    uint8_t doors[64];
+    uint8_t visited[8];
+    uint8_t cleared[8];
+    uint8_t looted[8];
+    uint8_t keyed[8];
+    uint8_t pick_n;
+    uint8_t pick_kind[6];
+    uint8_t pick_val[6];
+    uint16_t pick_x[6];
+    uint16_t pick_y[6];
+    uint16_t ward;
 } Slot;
 
 typedef char old_rec_size_ok[(sizeof(OldRec) == 122) ? 1 : -1];
+typedef char slot_v1_before_keyed[(offsetof(Slot, keyed) == sizeof(SlotV1)) ? 1 : -1];
+typedef char slot_fits_record[(sizeof(Slot) <= 512) ? 1 : -1];
 
 static const int NX[4] = {0, 1, 0, -1};
 static const int NY[4] = {-1, 0, 1, 0};
 static const int OPP[4] = {2, 3, 0, 1};
 static const int DX[8] = {1, 1, 0, -1, -1, -1, 0, 1};
 static const int DY[8] = {0, 1, 1, 1, 0, -1, -1, -1};
-static const char *const DECK_NAME[3] = {"HANGAR", "REACTOR", "BRIDGE"};
-static const char *const BOSS_NAME[3] = {"TWIN TURRET", "CORE ALPHA", "HEGEMONY CORE"};
-static const char *const PAUSE_ITEM[4] = {"RESUME", "SAVE", "LOAD", "ABORT"};
-static const char *const WEP_NAME[4] = {"PISTOL", "SCATTER", "RAIL", "MINIGUN"};
+#define INC_ZONE_MAX 64
+
+static int g_zones;
+static char g_zone_name[INC_ZONE_MAX][12];
+static void campaign_init(void);
+
+static const char *zone_name(int index) {
+    campaign_init();
+    if (g_zones <= 0) {
+        return "SHIP";
+    }
+    if (index < 0) {
+        index = 0;
+    }
+    if (index >= g_zones) {
+        index = g_zones - 1;
+    }
+    return g_zone_name[index];
+}
+static const char *const BOSS_IT[3] = {"TORRETTE", "NUCLEO ALFA", "NUCLEO EGEMONE"};
+static const char *const BOSS_EN[3] = {"TWIN TURRET", "CORE ALPHA", "HEGEMONY CORE"};
+static const char *const PAUSE_IT[4] = {"RIPRENDI", "SALVA", "CARICA", "ESCI"};
+static const char *const PAUSE_EN[4] = {"RESUME", "SAVE", "LOAD", "ABORT"};
+static const char *const WEP_IT[4] = {"PISTOLA", "SCATTER", "RAIL", "MITRA"};
+static const char *const WEP_EN[4] = {"PISTOL", "SCATTER", "RAIL", "MINIGUN"};
 
 static uint16_t g_tile_rgb[TID_COUNT][256];
 static uint16_t g_scratch[32 * 32];
@@ -201,6 +255,8 @@ static Shot g_shot[MAX_SHOT];
 static Pick g_pick[MAX_PICK];
 static Mine g_mine[MAX_MINE];
 static Barrel g_bar[MAX_BAR];
+static Crate g_crate[MAX_CRATE];
+static int g_ncrate;
 static Vent g_vent[MAX_VENT];
 static Crush g_crush[MAX_CRUSH];
 static Fx g_fx[MAX_FX];
@@ -212,21 +268,18 @@ static Slot g_slot[SAVE_SLOTS];
 static uint8_t g_slot_ok[SAVE_SLOTS];
 static uint32_t g_rng = 1;
 static uint32_t g_seed = 1;
-static uint32_t g_salt = 1;
-static int g_parent[64];
-static int g_bfs_dist[64];
-static uint8_t g_path[64];
-static uint8_t g_q[64];
 
 static int g_state, g_frame, g_tick, g_wait, g_menu, g_page;
 static int g_deck, g_rx, g_ry, g_px, g_py, g_face;
 static int g_hp, g_sp, g_heat, g_lock, g_over, g_weapon, g_held;
 static int g_ammo_s, g_ammo_y, g_grenades, g_has_key, g_key_used;
 static int g_data, g_hp_rank, g_heat_rank, g_dot_rank, g_unlocks;
-static int g_cd, g_melee_cd, g_iframes, g_combat, g_moving;
+static int g_cd, g_melee_cd, g_iframes, g_ward, g_combat, g_moving;
 static int g_slow, g_slash, g_rail_t, g_rail_x, g_rail_y, g_grid_off;
 static int g_shake, g_dot, g_boss_down, g_spiral, g_firing;
 static int g_slot_mode, g_slot_back, g_confirm;
+static int g_crawl;
+static int g_lang;
 static int g_start_x, g_start_y;
 static uint16_t g_edge;
 static int g_sel_track, g_sel_hold;
@@ -238,6 +291,45 @@ static int ri(int x, int y) { return y * MAP + x; }
 
 static int inside(int x, int y) {
     return (unsigned)x < MAP && (unsigned)y < MAP;
+}
+
+/* Fascia delle armi: stiva, propulsione, plancia. Il combattimento segue g_deck, 0..44. */
+static int zone_tier(void) {
+    int ship = g_deck / 3;
+    if (ship < 5) {
+        return 0;
+    }
+    if (ship < 10) {
+        return 1;
+    }
+    return 2;
+}
+
+static int scaled_hp(int base) {
+    return base + (base * g_deck) / 44;
+}
+
+static int pack_size(int keyroom) {
+    int n = keyroom ? 2 + g_deck / 18 : 2 + g_deck / 9;
+    int cap = keyroom ? 4 : 6;
+    if (n > cap) {
+        n = cap;
+    }
+    return n;
+}
+
+static int pack_kind(int slot) {
+    int z = g_deck - slot * 4;
+    if (z >= 34) {
+        return EK_BRUTE;
+    }
+    if (z >= 20) {
+        return EK_ELITE;
+    }
+    if (z >= 8) {
+        return EK_DROID;
+    }
+    return EK_GRUNT;
 }
 
 static int iabs(int v) { return v < 0 ? -v : v; }
@@ -272,6 +364,31 @@ static void banner(const char *s, int t) {
     g_banner_t = t;
 }
 
+static const char *tr(const char *it, const char *en) {
+    return g_lang ? en : it;
+}
+
+static const char *wep_name(int i) {
+    if (i < 0 || i > 3) {
+        i = 0;
+    }
+    return g_lang ? WEP_EN[i] : WEP_IT[i];
+}
+
+static const char *boss_name(int i) {
+    if (i < 0 || i > 2) {
+        i = 0;
+    }
+    return g_lang ? BOSS_EN[i] : BOSS_IT[i];
+}
+
+static const char *pause_item(int i) {
+    if (i < 0 || i > 3) {
+        i = 0;
+    }
+    return g_lang ? PAUSE_EN[i] : PAUSE_IT[i];
+}
+
 static void mem_zero(void *p, int n) {
     int i;
     uint8_t *b = (uint8_t *)p;
@@ -301,6 +418,7 @@ static void store_meta(void) {
     g_meta.heat_rank = (uint8_t)g_heat_rank;
     g_meta.dot_rank = (uint8_t)g_dot_rank;
     g_meta.unlocks = (uint8_t)g_unlocks;
+    g_meta.lang = (uint8_t)(g_lang ? 1 : 0);
 }
 
 static void flush_disk(void) {
@@ -328,8 +446,24 @@ static void read_slots(void) {
         mem_zero(&s, (int)sizeof(s));
         n = sys_record_read(name, &s, (int)sizeof(s));
         if (n == (int)sizeof(s) && s.magic[0] == 'S' && s.magic[1] == 'A' && s.magic[2] == 'V' &&
-            s.magic[3] == '1') {
+            s.magic[3] == '3') {
             g_slot[i] = s;
+            g_slot_ok[i] = 1;
+        } else if (n == (int)sizeof(s) - 2 && s.magic[0] == 'S' && s.magic[1] == 'A' &&
+                   s.magic[2] == 'V' && s.magic[3] == '2') {
+            g_slot[i] = s;
+            g_slot[i].magic[3] = '3';
+            g_slot[i].ward = 0;
+            g_slot_ok[i] = 1;
+        } else if (n == (int)sizeof(SlotV1) && s.magic[0] == 'S' && s.magic[1] == 'A' &&
+                   s.magic[2] == 'V' && s.magic[3] == '1') {
+            int k;
+            g_slot[i] = s;
+            g_slot[i].magic[3] = '3';
+            g_slot[i].pick_n = 0;
+            for (k = 0; k < 8; k++) {
+                g_slot[i].keyed[k] = s.visited[k];
+            }
             g_slot_ok[i] = 1;
         } else {
             mem_zero(&g_slot[i], (int)sizeof(g_slot[i]));
@@ -344,7 +478,7 @@ static int write_slot(int i) {
     g_slot[i].magic[0] = 'S';
     g_slot[i].magic[1] = 'A';
     g_slot[i].magic[2] = 'V';
-    g_slot[i].magic[3] = '1';
+    g_slot[i].magic[3] = '3';
     if (sys_record_write(name, &g_slot[i], (int)sizeof(g_slot[i])) != 0) {
         return 0;
     }
@@ -406,7 +540,9 @@ static void fill_slot_from_old(int i, const OldRec *r) {
         s->visited[k] = r->visited[k];
         s->cleared[k] = r->cleared[k];
         s->looted[k] = r->looted[k];
+        s->keyed[k] = r->visited[k];
     }
+    s->pick_n = 0;
 }
 
 static void load_disk(void) {
@@ -415,16 +551,16 @@ static void load_disk(void) {
     mem_zero(raw, (int)sizeof(raw));
     mem_zero(&g_meta, (int)sizeof(g_meta));
     n = sys_record_read(REC_NAME, raw, (int)sizeof(raw));
-    if (n >= (int)sizeof(Meta) && raw[0] == 'I' && raw[1] == 'N' && raw[2] == 'C' && raw[3] == '2') {
+    if (n >= 10 && raw[0] == 'I' && raw[1] == 'N' && raw[2] == 'C' && raw[3] == '2') {
         Meta m;
+        int i;
+        int c = n < (int)sizeof(m) ? n : (int)sizeof(m);
         mem_zero(&m, (int)sizeof(m));
-        {
-            int i;
-            for (i = 0; i < (int)sizeof(m); i++) {
-                ((uint8_t *)&m)[i] = raw[i];
-            }
+        for (i = 0; i < c; i++) {
+            ((uint8_t *)&m)[i] = raw[i];
         }
         take_meta(m.data, m.hp_rank, m.heat_rank, m.dot_rank, m.unlocks);
+        g_lang = (c > 10 && m.lang == 1) ? 1 : 0;
         read_slots();
         return;
     }
@@ -458,7 +594,7 @@ static void load_disk(void) {
    file sono un'ottava sotto la tabella in Hz (N_A3 = 440, N_E4 = 659,
    N_A4 = 880, N_B2+12 = 494, N_C4+1 = 554).
    Infiltrazione 122 BPM (123 ms a sedicesimo), dal titolo e per la run.
-   Boss 138 BPM (109 ms) solo nella stanza BOSS del ponte, deck 2.
+   Boss 138 BPM (109 ms) solo nella stanza BOSS dell'ultima zona.
    snd_tune non fa loop e un snd_voice sulla stessa voce lo spegne:
    a fine frase si rilancia, e se lama o pickup prendono la voce 1 il
    tema riparte dal sedicesimo in corso quando l'effetto finisce.
@@ -470,12 +606,13 @@ static void load_disk(void) {
 #define BGM_INFIL_MS 123
 #define BGM_BOSS_MS 109
 /* Meta' del livello precedente, cosi' la quadra non copre gli spari.
-   Sul titolo Y e B spostano g_bgm_lvl: 2 e' questo volume, 4 torna al
-   precedente, 0 zittisce. Il boss resta un filo piu' alto. */
+   Di base e' spenta. Sul titolo Y e B alzano e abbassano: il primo
+   scatto la fa partire, 2 e' questo volume, 4 il precedente. */
 #define BGM_VOL_IN 18
 #define BGM_VOL_BOSS 22
 #define BGM_LVL_MAX 4
-#define BGM_LVL_DEF 2
+#define BGM_LVL_UNIT 2
+#define BGM_LVL_DEF 0
 
 #define BGM_N(hz, ms) {(uint16_t)(hz), (uint16_t)(ms)}
 
@@ -513,7 +650,7 @@ static const lippus_note_t *g_bgm_notes;
 static int g_bgm_count;
 
 static int bgm_level_vol(int base) {
-    return base * g_bgm_lvl / BGM_LVL_DEF;
+    return base * g_bgm_lvl / BGM_LVL_UNIT;
 }
 
 static void bgm_set_theme(int theme) {
@@ -607,7 +744,7 @@ static void bgm_follow(void) {
         return;
     }
     theme = BGM_INFILTRATION;
-    if (g_state == ST_PLAY && g_deck == 2 && (unsigned)g_rx < MAP && (unsigned)g_ry < MAP &&
+    if (g_state == ST_PLAY && g_deck == g_zones - 1 && (unsigned)g_rx < MAP && (unsigned)g_ry < MAP &&
         g_map[ri(g_rx, g_ry)].kind == K_BOSS) {
         theme = BGM_BOSS_BATTLE;
     }
@@ -619,6 +756,14 @@ static void bgm_tick(unsigned frame_ms) {
         frame_ms = 1;
     }
     bgm_follow();
+    if (g_bgm_lvl <= 0) {
+        if (g_bgm_running) {
+            snd_voice(BGM_VOICE, SND_OFF, 0, 0, 0);
+            g_bgm_running = 0;
+        }
+        g_bgm_need_arm = 0;
+        return;
+    }
     if (!g_bgm_notes || g_bgm_total <= 0) {
         return;
     }
@@ -774,6 +919,22 @@ static void blit(int x, int y, const uint8_t *src, int w, int h, int flipx, int 
     gfx_blit(x + g_sox, y + g_soy, w, h, g_scratch, 1, LIPPUS_MAGENTA);
 }
 
+static void blit_scaled(int x, int y, const uint8_t *src, int sw, int sh, int dw, int dh) {
+    int row, col;
+    if (dw <= 0 || dh <= 0 || dw > 32 || dh > 32) {
+        return;
+    }
+    for (row = 0; row < dh; row++) {
+        int sy = row * sh / dh;
+        for (col = 0; col < dw; col++) {
+            int sx = col * sw / dw;
+            uint8_t ix = src[sy * sw + sx];
+            g_scratch[row * dw + col] = ix ? SCI_FI_PALETTE_32[ix] : LIPPUS_MAGENTA;
+        }
+    }
+    gfx_blit(x + g_sox, y + g_soy, dw, dh, g_scratch, 1, LIPPUS_MAGENTA);
+}
+
 static void tile_at(int x, int y, int tid) {
     if ((unsigned)tid >= TID_COUNT) {
         tid = 0;
@@ -868,14 +1029,39 @@ static int box_hit(int x, int y, int hw, int hh) {
            solid_at(x + hw, y + hh);
 }
 
+static int prop_blocks(int x, int y, int hw, int hh) {
+    int i;
+    for (i = 0; i < MAX_CRATE; i++) {
+        if (g_crate[i].on && iabs(g_crate[i].x - x) < hw + 8 && iabs(g_crate[i].y - y) < hh + 8) {
+            return 1;
+        }
+    }
+    for (i = 0; i < MAX_BAR; i++) {
+        if (g_bar[i].on && iabs(g_bar[i].x - x) < hw + 7 && iabs(g_bar[i].y - y) < hh + 7) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int crate_at_point(int x, int y) {
+    int i;
+    for (i = 0; i < MAX_CRATE; i++) {
+        if (g_crate[i].on && iabs(g_crate[i].x - x) < 8 && iabs(g_crate[i].y - y) < 8) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void try_move(int *x, int *y, int dx, int dy, int hw, int hh) {
     int nx = *x + dx;
     int ny;
-    if (!box_hit(nx, *y, hw, hh)) {
+    if (!box_hit(nx, *y, hw, hh) && !prop_blocks(nx, *y, hw, hh)) {
         *x = nx;
     }
     ny = *y + dy;
-    if (!box_hit(*x, ny, hw, hh)) {
+    if (!box_hit(*x, ny, hw, hh) && !prop_blocks(*x, ny, hw, hh)) {
         *y = ny;
     }
 }
@@ -981,12 +1167,16 @@ static void wipe_actors(void) {
     for (i = 0; i < MAX_BAR; i++) {
         g_bar[i].on = 0;
     }
+    for (i = 0; i < MAX_CRATE; i++) {
+        g_crate[i].on = 0;
+    }
     for (i = 0; i < MAX_FX; i++) {
         g_fx[i].on = 0;
     }
     g_nvent = 0;
     g_ncrush = 0;
     g_nbar = 0;
+    g_ncrate = 0;
     g_nmine = 0;
     g_bn = 0;
     g_rail_t = 0;
@@ -1024,6 +1214,8 @@ static void stamp_doors(void) {
         }
     }
 }
+
+static void seed_trial_props(const Room *r);
 
 static void build_geometry(void) {
     const Room *r = &g_map[ri(g_rx, g_ry)];
@@ -1116,6 +1308,7 @@ static void build_geometry(void) {
         g_ncrush++;
     }
     stamp_doors();
+    seed_trial_props(r);
 }
 
 static int spawn_cell_ok(int tx, int ty) {
@@ -1134,6 +1327,147 @@ static int spawn_cell_ok(int tx, int ty) {
            tid == TID_FLOOR_PAD;
 }
 
+static int take_prop_cell(int *tx, int *ty, int ax, int ay) {
+    static const int ox[8] = {4, 15, 4, 15, 6, 13, 3, 16};
+    static const int oy[8] = {10, 4, 4, 10, 9, 4, 9, 5};
+    int i;
+    int px = g_px >> 4;
+    int py = g_py >> 4;
+    for (i = 0; i < 8; i++) {
+        if (ox[i] == ax && oy[i] == ay) {
+            continue;
+        }
+        if (!spawn_cell_ok(ox[i], oy[i])) {
+            continue;
+        }
+        if (iabs(ox[i] - px) + iabs(oy[i] - py) < 3) {
+            continue;
+        }
+        *tx = ox[i];
+        *ty = oy[i];
+        return 1;
+    }
+    return 0;
+}
+
+static int row_open(int ty) {
+    int tx;
+    int n = 0;
+    if (ty < 2 || ty > 11) {
+        return 0;
+    }
+    for (tx = 2; tx <= 17; tx++) {
+        if (!solid_tid(g_tiles[ty][tx])) {
+            n++;
+        }
+    }
+    return n >= 14;
+}
+
+/* Tre casse da spingere sui tre riquadri. Allineate, spariscono. */
+static int find_align(int tx[3], int ty[3], int ox[3], int oy[3]) {
+    int horiz, y, x, k;
+    for (horiz = 1; horiz >= 0; horiz--) {
+        for (y = 3; y <= 9; y++) {
+            for (x = 3; x <= 15; x++) {
+                int ok = 1;
+                for (k = 0; k < 3; k++) {
+                    int gx = horiz ? x + k : x;
+                    int gy = horiz ? y : y + k;
+                    int sx = horiz ? gx : gx + 1;
+                    int sy = horiz ? gy - 1 : gy;
+                    if (!spawn_cell_ok(gx, gy) || !spawn_cell_ok(sx, sy)) {
+                        ok = 0;
+                    }
+                    if (iabs(gx - (g_px >> 4)) + iabs(gy - (g_py >> 4)) < 2) {
+                        ok = 0;
+                    }
+                }
+                if (!ok) {
+                    continue;
+                }
+                for (k = 0; k < 3; k++) {
+                    tx[k] = horiz ? x + k : x;
+                    ty[k] = horiz ? y : y + k;
+                    ox[k] = horiz ? tx[k] : tx[k] + 1;
+                    oy[k] = horiz ? ty[k] - 1 : ty[k];
+                }
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* Sui primi ponti i disegni di stanza non hanno barili ne' binari.
+   Il segreto di allineamento sta nella stanza marcata da raise_zone. */
+static void seed_trial_props(const Room *r) {
+    int tx, ty, ax, ay, py;
+    int goal_x[3], goal_y[3], off_x[3], off_y[3];
+    ax = -1;
+    ay = -1;
+    if (r->trick && !r->keyed && find_align(goal_x, goal_y, off_x, off_y)) {
+        int k;
+        for (k = 0; k < 3; k++) {
+            g_tiles[goal_y[k]][goal_x[k]] = TID_FLOOR_PAD;
+            g_crate[k].x = off_x[k] * 16 + 8;
+            g_crate[k].y = off_y[k] * 16 + 8;
+            g_crate[k].hx = g_crate[k].x;
+            g_crate[k].hy = g_crate[k].y;
+            g_crate[k].gx = goal_x[k] * 16 + 8;
+            g_crate[k].gy = goal_y[k] * 16 + 8;
+            g_crate[k].secret = 0;
+            g_crate[k].on = 1;
+        }
+        g_ncrate = 3;
+        if (!r->visited) {
+            banner(tr("ALLINEA 3 CASSE", "LINE 3 CRATES"), 80);
+        }
+    } else if (g_deck < 15 && g_ncrate == 0 &&
+               (r->kind == K_START || (r->kind == K_COMBAT && r->dist <= 2)) &&
+               take_prop_cell(&tx, &ty, ax, ay)) {
+        g_crate[0].x = tx * 16 + 8;
+        g_crate[0].y = ty * 16 + 8;
+        g_crate[0].hx = g_crate[0].x;
+        g_crate[0].hy = g_crate[0].y;
+        g_crate[0].gx = g_crate[0].x;
+        g_crate[0].gy = g_crate[0].y;
+        g_crate[0].secret = 0;
+        g_crate[0].on = 1;
+        g_ncrate = 1;
+        ax = tx;
+        ay = ty;
+    }
+    if (g_deck >= 15) {
+        return;
+    }
+    if ((r->kind == K_START || (r->kind == K_COMBAT && r->dist <= 2)) && g_nbar == 0 &&
+        take_prop_cell(&tx, &ty, ax, ay)) {
+        g_bar[g_nbar].x = tx * 16 + 8;
+        g_bar[g_nbar].y = ty * 16 + 8;
+        g_bar[g_nbar].hp = 16;
+        g_bar[g_nbar].on = 1;
+        g_nbar++;
+    }
+    if (r->trick || r->kind != K_COMBAT || r->dist != 1 || g_ncrush > 0) {
+        return;
+    }
+    py = g_py >> 4;
+    for (ty = 3; ty <= 10; ty++) {
+        if (ty == 6 || ty == 7 || iabs(ty - py) < 2 || !row_open(ty)) {
+            continue;
+        }
+        g_crush[g_ncrush].x = 48;
+        g_crush[g_ncrush].y = ty * 16 + 8;
+        g_crush[g_ncrush].dir = 1;
+        g_crush[g_ncrush].minx = 32;
+        g_crush[g_ncrush].maxx = 288;
+        g_crush[g_ncrush].on = 1;
+        g_ncrush++;
+        break;
+    }
+}
+
 static int pick_cell(int *ox, int *oy) {
     int n, i, tx, ty;
     for (n = 0; n < 40; n++) {
@@ -1145,6 +1479,9 @@ static int pick_cell(int *ox, int *oy) {
         *ox = tx * 16 + 8;
         *oy = ty * 16 + 8;
         if (iabs(*ox - g_px) + iabs(*oy - g_py) < 48) {
+            continue;
+        }
+        if (prop_blocks(*ox, *oy, 4, 4)) {
             continue;
         }
         for (i = 0; i < MAX_EN; i++) {
@@ -1198,16 +1535,16 @@ static void spawn_enemy(int kind, int x, int y) {
     e->kvy = 0;
     e->strafe = 1;
     if (kind == EK_GRUNT) {
-        e->hp = 30;
+        e->hp = scaled_hp(30);
     } else if (kind == EK_DROID) {
-        e->hp = 16;
+        e->hp = scaled_hp(16);
         sfx(SFX_DROID);
     } else if (kind == EK_ELITE) {
-        e->hp = 52;
+        e->hp = scaled_hp(52);
     } else if (kind == EK_BRUTE) {
-        e->hp = 120;
+        e->hp = scaled_hp(120);
     } else {
-        e->hp = 220 + g_deck * 110;
+        e->hp = 220 + g_deck * 15;
         e->x = 160;
         e->y = 104;
     }
@@ -1231,11 +1568,44 @@ static void spawn_mine(void) {
     }
 }
 
+static void spawn_pack(int n) {
+    int i, x, y;
+    for (i = 0; i < n; i++) {
+        if (pick_cell(&x, &y)) {
+            spawn_enemy(pack_kind(i), x, y);
+        }
+    }
+}
+
+/* Lo scatter è in zona 0, il rail dalla 15, il minigun dalla 30.
+   Da lì in poi le munizioni girano: più l'arma è forte, più sono rare. */
+static void lay_ammo(void) {
+    int x, y;
+    if ((rnd() % 2) == 0 && pick_cell(&x, &y)) {
+        spawn_pick(x, y, PK_FUS, 12);
+    }
+    if (g_deck >= 30) {
+        if ((rnd() % 5) == 0 && pick_cell(&x, &y)) {
+            spawn_pick(x, y, PK_YEL, 8);
+        }
+    } else if (g_deck >= 15) {
+        if ((rnd() % 3) == 0 && pick_cell(&x, &y)) {
+            spawn_pick(x, y, PK_YEL, 16);
+        }
+    }
+}
+
 static void spawn_population(void) {
     Room *r = &g_map[ri(g_rx, g_ry)];
     int x, y;
-    int sig = g_deck == 0 ? PK_WSC : (g_deck == 1 ? PK_WRA : PK_WMI);
-    int bit = g_deck == 0 ? 2 : (g_deck == 1 ? 4 : 8);
+    int tier = zone_tier();
+    int sig = tier == 0 ? PK_WSC : (tier == 1 ? PK_WRA : PK_WMI);
+    int bit = tier == 0 ? 2 : (tier == 1 ? 4 : 8);
+    int mines;
+    g_rng = g_seed ^ ((uint32_t)g_rx << 16) ^ ((uint32_t)g_ry * 0x45D9F3Bu);
+    if (!g_rng) {
+        g_rng = 1;
+    }
     if (r->kind == K_START) {
         r->cleared = 1;
         r->looted = 1;
@@ -1243,10 +1613,30 @@ static void spawn_population(void) {
     }
     if (!r->looted && r->kind == K_LOOT) {
         if (pick_cell(&x, &y)) {
-            spawn_pick(x, y, PK_MED, 35);
+            int kit = 35;
+            if (g_deck >= 32) {
+                kit = 0;
+            } else if (g_deck >= 16) {
+                kit = 70;
+            } else if (g_deck < 6) {
+                kit = 15;
+            }
+            spawn_pick(x, y, PK_MED, kit);
         }
         if (pick_cell(&x, &y)) {
-            spawn_pick(x, y, (rnd() & 1) ? PK_YEL : PK_FUS, 1);
+            spawn_pick(x, y, PK_FUS, 16);
+        }
+        if (g_deck >= 15 && pick_cell(&x, &y)) {
+            spawn_pick(x, y, PK_YEL, g_deck >= 30 ? 8 : 18);
+        }
+        if (g_deck >= 22 && pick_cell(&x, &y)) {
+            spawn_pick(x, y, PK_FUS, 12);
+        }
+        if (g_deck >= 8 && pick_cell(&x, &y)) {
+            spawn_pick(x, y, PK_SH, 25);
+        }
+        if (g_deck >= 28 && pick_cell(&x, &y)) {
+            spawn_pick(x, y, (g_deck >= 38) ? PK_RED : PK_DATA, 1);
         }
         r->looted = 1;
         r->cleared = 1;
@@ -1255,14 +1645,18 @@ static void spawn_population(void) {
     if (r->kind == K_KEY && !r->looted) {
         if (pick_cell(&x, &y)) {
             if (g_held & bit) {
-                spawn_pick(x, y, g_deck == 0 ? PK_FUS : PK_YEL, 1);
+                if (tier == 0) {
+                    spawn_pick(x, y, PK_FUS, 20);
+                } else {
+                    spawn_pick(x, y, PK_YEL, tier == 2 ? 10 : 22);
+                }
             } else {
                 spawn_pick(x, y, sig, 1);
             }
         }
         r->looted = 1;
     }
-    if (r->kind == K_KEY && !g_has_key && !g_key_used && pick_cell(&x, &y)) {
+    if (r->kind == K_KEY && !r->keyed && pick_cell(&x, &y)) {
         spawn_pick(x, y, PK_KEY, 1);
     }
     if (r->cleared) {
@@ -1273,57 +1667,27 @@ static void spawn_population(void) {
         return;
     }
     if (!r->looted && r->kind == K_COMBAT) {
-        if ((rnd() % 4) == 0 && pick_cell(&x, &y)) {
-            spawn_pick(x, y, PK_MED, 35);
+        if ((rnd() % 5) == 0 && pick_cell(&x, &y)) {
+            int roll = (int)(rnd() % 10);
+            int kit = 15;
+            if (roll >= 8 && g_deck >= 24) {
+                kit = 0;
+            } else if (roll >= 6) {
+                kit = 70;
+            } else if (roll >= 3) {
+                kit = 35;
+            }
+            spawn_pick(x, y, PK_MED, kit);
         }
+        lay_ammo();
         r->looted = 1;
     }
-    if (r->kind == K_KEY) {
-        if (pick_cell(&x, &y)) {
-            spawn_enemy(g_deck == 0 ? EK_DROID : EK_ELITE, x, y);
-        }
-        if (pick_cell(&x, &y)) {
-            spawn_enemy(EK_GRUNT, x, y);
-        }
-    } else if (g_deck == 0) {
-        if (pick_cell(&x, &y)) {
-            spawn_enemy(EK_GRUNT, x, y);
-        }
-        if (pick_cell(&x, &y)) {
-            spawn_enemy(EK_GRUNT, x, y);
-        }
-        if (r->dist >= 3 && pick_cell(&x, &y)) {
-            spawn_enemy(EK_DROID, x, y);
-        }
-    } else if (g_deck == 1) {
-        if (pick_cell(&x, &y)) {
-            spawn_enemy(EK_ELITE, x, y);
-        }
-        if (pick_cell(&x, &y)) {
-            spawn_enemy(EK_GRUNT, x, y);
-        }
-        if ((rnd() & 1) && pick_cell(&x, &y)) {
-            spawn_enemy(EK_DROID, x, y);
-        }
-    } else if (rnd() & 1) {
-        if (pick_cell(&x, &y)) {
-            spawn_enemy(EK_BRUTE, x, y);
-        }
-        if (pick_cell(&x, &y)) {
-            spawn_enemy(EK_GRUNT, x, y);
-        }
-    } else {
-        if (pick_cell(&x, &y)) {
-            spawn_enemy(EK_ELITE, x, y);
-        }
-        if (pick_cell(&x, &y)) {
-            spawn_enemy(EK_DROID, x, y);
-        }
-    }
-    if (r->kind == K_COMBAT && (g_deck > 0 || (rnd() % 3) == 0)) {
-        spawn_mine();
-        if (g_deck == 2) {
+    spawn_pack(pack_size(r->kind == K_KEY));
+    mines = g_deck / 15;
+    if (r->kind == K_COMBAT) {
+        while (mines > 0) {
             spawn_mine();
+            mines--;
         }
     }
 }
@@ -1360,35 +1724,56 @@ static void enter_at(int x, int y, int travel, int breach) {
         g_slow = 14;
         sfx(SFX_SLOW_IN);
         if (g_map[ri(x, y)].kind == K_BOSS) {
-            banner(BOSS_NAME[g_deck], 90);
+            banner(boss_name(zone_tier()), 90);
         }
     }
 }
 
-static void shuffle4(int *o) {
-    int i;
-    for (i = 3; i > 0; i--) {
-        int j = (int)(rnd() % (unsigned)(i + 1));
-        int t = o[i];
-        o[i] = o[j];
-        o[j] = t;
+static void lock_toward(int id, int nid) {
+    int d;
+    int fx = id % MAP;
+    int fy = id / MAP;
+    int tx = nid % MAP;
+    int ty = nid / MAP;
+    for (d = 0; d < 4; d++) {
+        if (fx + NX[d] == tx && fy + NY[d] == ty) {
+            g_map[id].door[d] = D_LOCKED;
+            g_map[nid].door[OPP[d]] = D_LOCKED;
+            return;
+        }
     }
 }
 
-static int bfs_far(int sx, int sy) {
+/* Segreti nei rami laterali. Porte in piu' solo dopo la prima chiave,
+   cosi' la via del boss non si chiude prima di poterla aprire. */
+static void raise_zone(void) {
+    int parent[64];
+    uint8_t onpath[64];
+    uint8_t protect[64];
+    uint8_t q[64];
+    int start = ri(g_start_x, g_start_y);
+    int boss = -1;
+    int keyd = 0;
     int qh = 0;
     int qt = 0;
-    int start = ri(sx, sy);
-    int i, far, best;
+    int i;
+    int puzzles = g_deck / 12;
+    int quota = 1 + g_deck / 12;
     for (i = 0; i < 64; i++) {
-        g_parent[i] = -1;
-        g_bfs_dist[i] = -1;
+        parent[i] = -1;
+        onpath[i] = 0;
+        protect[i] = 0;
+        if (g_map[i].on && g_map[i].kind == K_BOSS) {
+            boss = i;
+        }
     }
-    g_q[qt++] = (uint8_t)start;
-    g_bfs_dist[start] = 0;
-    g_parent[start] = start;
+    if (boss < 0) {
+        return;
+    }
+    parent[start] = start;
+    q[qt++] = (uint8_t)start;
     while (qh < qt) {
-        int id = g_q[qh++];
+        int id = q[qh++];
         int x = id % MAP;
         int y = id / MAP;
         int d;
@@ -1403,51 +1788,317 @@ static int bfs_far(int sx, int sy) {
                 continue;
             }
             n = ri(nx, ny);
-            if (g_bfs_dist[n] >= 0) {
+            if (!g_map[n].on || parent[n] >= 0) {
                 continue;
             }
-            g_bfs_dist[n] = g_bfs_dist[id] + 1;
-            g_parent[n] = id;
-            g_q[qt++] = (uint8_t)n;
+            parent[n] = id;
+            q[qt++] = (uint8_t)n;
         }
     }
-    far = start;
-    best = 0;
+    i = boss;
+    while (i >= 0) {
+        onpath[i] = 1;
+        if (i == start) {
+            break;
+        }
+        i = parent[i];
+    }
     for (i = 0; i < 64; i++) {
-        if (g_bfs_dist[i] > best) {
-            best = g_bfs_dist[i];
-            far = i;
+        int p;
+        if (!g_map[i].on || g_map[i].kind != K_KEY) {
+            continue;
+        }
+        if (g_map[i].dist > keyd) {
+            keyd = g_map[i].dist;
+        }
+        p = i;
+        while (p >= 0 && !protect[p]) {
+            protect[p] = 1;
+            if (p == start) {
+                break;
+            }
+            p = parent[p];
         }
     }
-    return far;
+    for (i = 0; i < puzzles; i++) {
+        int gate = -1;
+        int gate_d = 99;
+        int key = -1;
+        int key_d = 99;
+        int id;
+        for (id = 0; id < 64; id++) {
+            int d;
+            if (!onpath[id] || g_map[id].kind != K_COMBAT || protect[id]) {
+                continue;
+            }
+            if (g_map[id].dist <= keyd || g_map[id].dist >= gate_d) {
+                continue;
+            }
+            for (d = 0; d < 4; d++) {
+                int nx, ny, n;
+                if (g_map[id].door[d] != D_CLOSED) {
+                    continue;
+                }
+                nx = (id % MAP) + NX[d];
+                ny = (id / MAP) + NY[d];
+                if (!inside(nx, ny)) {
+                    continue;
+                }
+                n = ri(nx, ny);
+                if (g_map[n].on && onpath[n] && g_map[n].dist < g_map[id].dist) {
+                    gate = id;
+                    gate_d = g_map[id].dist;
+                }
+            }
+        }
+        if (gate < 0) {
+            break;
+        }
+        for (id = 0; id < 64; id++) {
+            if (g_map[id].kind != K_COMBAT || !g_map[id].on) {
+                continue;
+            }
+            if (g_map[id].dist < 1 || g_map[id].dist >= g_map[gate].dist) {
+                continue;
+            }
+            if (g_map[id].dist < key_d) {
+                key_d = g_map[id].dist;
+                key = id;
+            }
+        }
+        if (key < 0) {
+            break;
+        }
+        g_map[key].kind = K_KEY;
+        for (id = 0; id < 4; id++) {
+            int nx = (gate % MAP) + NX[id];
+            int ny = (gate / MAP) + NY[id];
+            int n;
+            if (g_map[gate].door[id] != D_CLOSED || !inside(nx, ny)) {
+                continue;
+            }
+            n = ri(nx, ny);
+            if (g_map[n].on && g_map[n].dist < g_map[gate].dist) {
+                lock_toward(gate, n);
+                break;
+            }
+        }
+    }
+    {
+        int loot = 0;
+        int have;
+        int near = -1;
+        int near_d = 99;
+        int ward = -1;
+        int ward_d = -1;
+        int id;
+        for (id = 0; id < 64; id++) {
+            g_map[id].trick = 0;
+            if (g_map[id].on && g_map[id].kind == K_LOOT) {
+                loot++;
+            }
+        }
+        for (id = 0; id < 64; id++) {
+            if (!g_map[id].on || g_map[id].kind != K_COMBAT || g_map[id].dist < 1) {
+                continue;
+            }
+            if (g_map[id].dist < near_d) {
+                near_d = g_map[id].dist;
+                near = id;
+            }
+            if (g_deck >= 16 && onpath[id] && g_map[id].dist < g_map[boss].dist && g_map[id].dist > ward_d) {
+                ward_d = g_map[id].dist;
+                ward = id;
+            }
+        }
+        if (ward >= 0) {
+            g_map[ward].trick = 3;
+        }
+        if (near >= 0 && near != ward) {
+            g_map[near].trick = (g_deck == 0 || g_deck == 15 || g_deck == 30) ? 2 : 1;
+        }
+        have = loot;
+        for (id = 0; id < 64; id++) {
+            if (g_map[id].trick) {
+                have++;
+            }
+        }
+        while (have < quota) {
+            int best = -1;
+            int best_d = -1;
+            for (id = 0; id < 64; id++) {
+                if (onpath[id] || !g_map[id].on || g_map[id].kind != K_COMBAT || g_map[id].trick) {
+                    continue;
+                }
+                if (g_map[id].dist > best_d) {
+                    best_d = g_map[id].dist;
+                    best = id;
+                }
+            }
+            if (best < 0) {
+                break;
+            }
+            g_map[best].kind = K_LOOT;
+            have++;
+        }
+    }
 }
 
-static int dir_between(int fx, int fy, int tx, int ty) {
-    if (tx == fx && ty == fy - 1) {
-        return 0;
+static const char *next_line(const char *s) {
+    while (*s && *s != '\n') {
+        s++;
     }
-    if (tx == fx + 1 && ty == fy) {
-        return 1;
+    if (*s == '\n') {
+        s++;
     }
-    if (tx == fx && ty == fy + 1) {
-        return 2;
-    }
-    return 3;
+    return s;
 }
 
-static void gen_deck(uint32_t seed, int deck) {
-    int sx = 2;
-    int sy = 5;
-    int sp = 0;
-    int count = 1;
-    int guard = 0;
-    int stackx[64], stacky[64];
-    int i, added, boss, prev, key, loot, far_d;
-    g_seed = seed ? seed : 1;
-    g_rng = g_seed;
-    g_deck = deck;
-    g_start_x = sx;
-    g_start_y = sy;
+static int line_exact(const char *s, const char *w) {
+    while (*w) {
+        if (*s++ != *w++) {
+            return 0;
+        }
+    }
+    return *s == '\n' || *s == '\r' || *s == 0;
+}
+
+static int line_field(const char *s, const char *w) {
+    while (*w) {
+        if (*s++ != *w++) {
+            return 0;
+        }
+    }
+    return *s == ' ';
+}
+
+static int read_num(const char **ps) {
+    const char *s = *ps;
+    int n = 0;
+    while (*s == ' ') {
+        s++;
+    }
+    while (*s >= '0' && *s <= '9') {
+        n = n * 10 + (*s - '0');
+        s++;
+    }
+    *ps = s;
+    return n;
+}
+
+static uint32_t read_u32(const char **ps) {
+    const char *s = *ps;
+    uint32_t n = 0;
+    while (*s == ' ') {
+        s++;
+    }
+    while (*s >= '0' && *s <= '9') {
+        n = n * 10u + (uint32_t)(*s - '0');
+        s++;
+    }
+    *ps = s;
+    return n;
+}
+
+static int word_kind(const char *s) {
+    if (s[0] == 's') {
+        return K_START;
+    }
+    if (s[0] == 'k') {
+        return K_KEY;
+    }
+    if (s[0] == 'b') {
+        return K_BOSS;
+    }
+    if (s[0] == 'l') {
+        return K_LOOT;
+    }
+    return K_COMBAT;
+}
+
+static int door_code(char c) {
+    if (c == 'c') {
+        return D_CLOSED;
+    }
+    if (c == 'l') {
+        return D_LOCKED;
+    }
+    if (c == 'o') {
+        return D_OPEN;
+    }
+    return D_NONE;
+}
+
+static const char *find_zone(int index) {
+    const char *s = INC_CAMPAIGN;
+    int n = 0;
+    while (*s) {
+        if (line_exact(s, "zone")) {
+            if (n == index) {
+                return next_line(s);
+            }
+            n++;
+        }
+        s = next_line(s);
+    }
+    return 0;
+}
+
+static void copy_name(int index, const char *s) {
+    int k = 0;
+    s += 5;
+    while (*s && *s != '\n' && *s != '\r' && k < 11) {
+        g_zone_name[index][k++] = *s++;
+    }
+    g_zone_name[index][k] = 0;
+}
+
+static void campaign_init(void) {
+    const char *s;
+    int n = 0;
+    if (g_zones > 0) {
+        return;
+    }
+    s = INC_CAMPAIGN;
+    while (*s && n < INC_ZONE_MAX) {
+        if (line_exact(s, "zone")) {
+            const char *b = next_line(s);
+            g_zone_name[n][0] = 0;
+            while (*b && !line_exact(b, "end")) {
+                if (line_field(b, "name")) {
+                    copy_name(n, b);
+                }
+                if (line_exact(b, "zone")) {
+                    break;
+                }
+                b = next_line(b);
+            }
+            if (!g_zone_name[n][0]) {
+                g_zone_name[n][0] = 'Z';
+                g_zone_name[n][1] = 0;
+            }
+            n++;
+        }
+        s = next_line(s);
+    }
+    g_zones = n > 0 ? n : 1;
+}
+
+static void load_zone(int index) {
+    const char *s;
+    int i;
+    int rooms = 0;
+    campaign_init();
+    if (index < 0) {
+        index = 0;
+    }
+    if (index >= g_zones) {
+        index = g_zones - 1;
+    }
+    g_deck = index;
+    g_seed = 1;
+    g_start_x = 2;
+    g_start_y = 5;
     for (i = 0; i < 64; i++) {
         int d;
         g_map[i].on = 0;
@@ -1457,163 +2108,62 @@ static void gen_deck(uint32_t seed, int deck) {
         g_map[i].visited = 0;
         g_map[i].cleared = 0;
         g_map[i].looted = 0;
+        g_map[i].keyed = 0;
+        g_map[i].trick = 0;
         for (d = 0; d < 4; d++) {
             g_map[i].door[d] = D_NONE;
         }
-        g_path[i] = 0;
     }
-    g_map[ri(sx, sy)].on = 1;
-    stackx[0] = sx;
-    stacky[0] = sy;
-    sp = 1;
-    while (sp > 0 && count < 18 && guard++ < 500) {
-        int x = stackx[sp - 1];
-        int y = stacky[sp - 1];
-        int order[4] = {0, 1, 2, 3};
-        int stepped = 0;
-        int k;
-        shuffle4(order);
-        for (k = 0; k < 4; k++) {
-            int d = order[k];
-            int nx = x + NX[d];
-            int ny = y + NY[d];
-            if (!inside(nx, ny) || g_map[ri(nx, ny)].on) {
-                continue;
+    s = find_zone(index);
+    while (s && *s && !line_exact(s, "end") && !line_exact(s, "zone")) {
+        if (line_field(s, "seed")) {
+            const char *p = s + 5;
+            g_seed = read_u32(&p);
+        } else if (line_field(s, "start")) {
+            const char *p = s + 6;
+            g_start_x = read_num(&p);
+            g_start_y = read_num(&p);
+        } else if (line_field(s, "room") && rooms < 18) {
+            const char *p = s + 5;
+            int x = read_num(&p);
+            int y = read_num(&p);
+            int kind, tmpl, dist, d;
+            Room *r;
+            while (*p == ' ') {
+                p++;
             }
-            g_map[ri(nx, ny)].on = 1;
-            g_map[ri(x, y)].door[d] = D_CLOSED;
-            g_map[ri(nx, ny)].door[OPP[d]] = D_CLOSED;
-            stackx[sp] = nx;
-            stacky[sp] = ny;
-            sp++;
-            count++;
-            stepped = 1;
-            break;
-        }
-        if (!stepped) {
-            sp--;
-        }
-    }
-    boss = bfs_far(sx, sy);
-    prev = g_parent[boss];
-    i = boss;
-    g_path[ri(sx, sy)] = 1;
-    for (guard = 0; i >= 0 && guard++ < 64; guard++) {
-        g_path[i] = 1;
-        if (i == ri(sx, sy)) {
-            break;
-        }
-        i = g_parent[i];
-    }
-    if (prev >= 0 && prev != boss) {
-        int bx = boss % MAP;
-        int by = boss / MAP;
-        int px = prev % MAP;
-        int py = prev / MAP;
-        int d = dir_between(bx, by, px, py);
-        g_map[boss].door[d] = D_LOCKED;
-        g_map[prev].door[OPP[d]] = D_LOCKED;
-    }
-    added = 0;
-    for (i = 0; i < 40 && added < 3; i++) {
-        int x = (int)(rnd() % MAP);
-        int y = (int)(rnd() % MAP);
-        int d = (int)(rnd() % 4);
-        int nx = x + NX[d];
-        int ny = y + NY[d];
-        int a, b;
-        if (!inside(nx, ny)) {
-            continue;
-        }
-        a = ri(x, y);
-        b = ri(nx, ny);
-        if (!g_map[a].on || !g_map[b].on || g_map[a].door[d]) {
-            continue;
-        }
-        if (a == boss || b == boss) {
-            continue;
-        }
-        g_map[a].door[d] = D_CLOSED;
-        g_map[b].door[OPP[d]] = D_CLOSED;
-        added++;
-    }
-    bfs_far(sx, sy);
-    for (i = 0; i < 64; i++) {
-        if (g_map[i].on && g_bfs_dist[i] > 0) {
-            g_map[i].dist = (uint8_t)g_bfs_dist[i];
-        }
-    }
-    key = -1;
-    far_d = -1;
-    for (i = 0; i < 64; i++) {
-        if (!g_map[i].on || g_path[i] || i == boss) {
-            continue;
-        }
-        if (g_bfs_dist[i] > far_d) {
-            far_d = g_bfs_dist[i];
-            key = i;
-        }
-    }
-    if (key < 0) {
-        for (i = 0; i < 64; i++) {
-            if (g_map[i].on && i != boss && i != ri(sx, sy)) {
-                key = i;
-                break;
+            kind = word_kind(p);
+            while (*p && *p != ' ') {
+                p++;
+            }
+            tmpl = read_num(&p);
+            dist = read_num(&p);
+            while (*p == ' ') {
+                p++;
+            }
+            if (inside(x, y)) {
+                r = &g_map[ri(x, y)];
+                r->on = 1;
+                r->kind = (uint8_t)kind;
+                r->tmpl = (uint8_t)tmpl;
+                r->dist = (uint8_t)dist;
+                for (d = 0; d < 4 && p[d] && p[d] != '\n' && p[d] != '\r'; d++) {
+                    r->door[d] = (uint8_t)door_code(p[d]);
+                }
+                rooms++;
             }
         }
+        s = next_line(s);
     }
-    loot = -1;
-    for (i = 0; i < 64; i++) {
-        if (!g_map[i].on || i == boss || i == ri(sx, sy) || i == key) {
-            continue;
-        }
-        if (!g_path[i]) {
-            loot = i;
-            break;
-        }
+    g_rng = g_seed ? g_seed : 1;
+    if (!inside(g_start_x, g_start_y)) {
+        g_start_x = 2;
+        g_start_y = 5;
     }
-    if (loot < 0) {
-        for (i = 0; i < 64; i++) {
-            if (g_map[i].on && i != boss && i != ri(sx, sy) && i != key) {
-                loot = i;
-                break;
-            }
-        }
-    }
-    for (i = 0; i < 64; i++) {
-        int kind = K_COMBAT;
-        if (!g_map[i].on) {
-            continue;
-        }
-        if (i == ri(sx, sy)) {
-            kind = K_START;
-        } else if (i == boss) {
-            kind = K_BOSS;
-        } else if (i == key) {
-            kind = K_KEY;
-        } else if (i == loot) {
-            kind = K_LOOT;
-        }
-        g_map[i].kind = (uint8_t)kind;
-        if (kind == K_START || kind == K_LOOT) {
-            g_map[i].tmpl = 0;
-        } else if (kind == K_BOSS) {
-            g_map[i].tmpl = 6;
-        } else if (kind == K_KEY) {
-            g_map[i].tmpl = 7;
-        } else if (deck == 0) {
-            g_map[i].tmpl = (uint8_t)((rnd() & 1) ? 1 : 0);
-        } else if (deck == 1) {
-            static const uint8_t tab[4] = {1, 2, 3, 4};
-            g_map[i].tmpl = tab[rnd() % 4];
-        } else {
-            static const uint8_t tab[4] = {1, 3, 5, 5};
-            g_map[i].tmpl = tab[rnd() % 4];
-        }
-    }
-    g_map[ri(sx, sy)].visited = 1;
-    g_map[ri(sx, sy)].cleared = 1;
-    g_map[ri(sx, sy)].looted = 1;
+    g_map[ri(g_start_x, g_start_y)].visited = 1;
+    g_map[ri(g_start_x, g_start_y)].cleared = 1;
+    g_map[ri(g_start_x, g_start_y)].looted = 1;
+    raise_zone();
 }
 
 static void queue_boom(int x, int y, int dmg);
@@ -1645,7 +2195,7 @@ static void spawn_fx(int x, int y) {
 
 static void hurt_player(int dmg) {
     int to_hp, to_sh;
-    if (dmg <= 0 || g_iframes > 0 || g_state != ST_PLAY || g_hp <= 0) {
+    if (dmg <= 0 || g_iframes > 0 || g_ward > 0 || g_state != ST_PLAY || g_hp <= 0) {
         return;
     }
     to_hp = dmg / 4;
@@ -1670,13 +2220,17 @@ static void maybe_drop(int x, int y, int kind, int close) {
     int bonus = close ? 18 : 0;
     if (kind == EK_GRUNT) {
         if (roll < 24 + bonus) {
-            spawn_pick(x, y, PK_MED, 35);
+            spawn_pick(x, y, PK_MED, (rnd() % 3) == 0 ? 35 : 15);
         } else if (roll < 55 + bonus) {
-            spawn_pick(x, y, (rnd() & 1) ? PK_FUS : PK_YEL, 1);
+            if (g_deck >= 15 && (rnd() % 3) == 0) {
+                spawn_pick(x, y, PK_YEL, g_deck >= 30 ? 8 : 14);
+            } else {
+                spawn_pick(x, y, PK_FUS, 10);
+            }
         }
     } else if (kind == EK_DROID) {
         if (roll < 20 + bonus) {
-            spawn_pick(x, y, PK_MED, 35);
+            spawn_pick(x, y, PK_MED, 15);
         }
     } else     if (kind == EK_ELITE) {
         int pool = g_unlocks & ~g_held & 0x0E;
@@ -1684,21 +2238,27 @@ static void maybe_drop(int x, int y, int kind, int close) {
             int w = (pool & 2) ? PK_WSC : ((pool & 4) ? PK_WRA : PK_WMI);
             spawn_pick(x, y, w, 1);
         } else if (roll < 30 + bonus) {
-            spawn_pick(x, y, PK_MED, 35);
+            spawn_pick(x, y, PK_MED, (rnd() & 1) ? 70 : 35);
+        } else if (g_deck >= 15) {
+            spawn_pick(x, y, PK_YEL, g_deck >= 30 ? 8 : 16);
         } else {
-            spawn_pick(x, y, PK_YEL, 1);
+            spawn_pick(x, y, PK_FUS, 12);
         }
         if (!spawn_pick(x + 8, y, PK_DATA, 1)) {
             grant_data(1);
         }
     } else if (kind == EK_BRUTE) {
-        spawn_pick(x, y, PK_MED, 35);
-        spawn_pick(x + 10, y, PK_YEL, 1);
+        spawn_pick(x, y, PK_MED, (rnd() % 4) == 0 ? 0 : 70);
+        if (g_deck >= 15) {
+            spawn_pick(x + 10, y, PK_YEL, g_deck >= 30 ? 8 : 16);
+        } else {
+            spawn_pick(x + 10, y, PK_FUS, 12);
+        }
         if (!spawn_pick(x - 8, y, PK_DATA, 2)) {
             grant_data(2);
         }
     } else if (kind == EK_BOSS) {
-        spawn_pick(x, y + 14, PK_MED, 35);
+        spawn_pick(x, y + 14, PK_MED, 0);
         spawn_pick(x + 14, y, PK_SH, 25);
         spawn_pick(x - 14, y, PK_RED, 1);
         if (!spawn_pick(x, y - 14, PK_DATA, 3)) {
@@ -1941,12 +2501,12 @@ static void set_link(int d, int st) {
 static void use_door(int d) {
     Room *r = &g_map[ri(g_rx, g_ry)];
     if (r->door[d] == D_LOCKED) {
-        if (!g_has_key) {
+        if (g_has_key <= 0) {
             sfx(SFX_LOCK);
-            banner("KEYCARD REQUIRED", 50);
+            banner(tr("SERVE LA CHIAVE", "KEYCARD REQUIRED"), 50);
             return;
         }
-        g_has_key = 0;
+        g_has_key--;
         g_key_used = 1;
     }
     set_link(d, D_OPEN);
@@ -1991,7 +2551,7 @@ static void try_vent(void) {
         g_heat = 0;
         g_over = 3;
         sfx(SFX_VENT);
-        banner("VENT", 30);
+        banner(tr("SFIATO", "VENT"), 30);
     } else {
         g_lock = 45;
         g_heat = 100;
@@ -2171,9 +2731,21 @@ static void take_pick(int i) {
     int bit = 0;
     int wep = -1;
     if (p->kind == PK_MED) {
-        g_hp += 35;
-        if (g_hp > hp_max()) {
+        if (p->val <= 0) {
             g_hp = hp_max();
+            banner(tr("KIT PIENO", "FULL MEDKIT"), 45);
+        } else {
+            g_hp += p->val;
+            if (g_hp > hp_max()) {
+                g_hp = hp_max();
+            }
+            if (p->val >= 70) {
+                banner(tr("PACCO SALUTE", "MED PACK"), 40);
+            } else if (p->val >= 35) {
+                banner(tr("KIT", "MEDKIT"), 30);
+            } else {
+                banner(tr("CEROTTO", "PATCH"), 30);
+            }
         }
     } else if (p->kind == PK_SH) {
         g_sp += 25;
@@ -2181,12 +2753,12 @@ static void take_pick(int i) {
             g_sp = 50;
         }
     } else if (p->kind == PK_FUS) {
-        g_ammo_s += 10;
+        g_ammo_s += p->val >= 8 ? p->val : 10;
         if (g_ammo_s > 80) {
             g_ammo_s = 80;
         }
     } else if (p->kind == PK_YEL) {
-        g_ammo_y += 28;
+        g_ammo_y += p->val >= 8 ? p->val : 28;
         if (g_ammo_y > 200) {
             g_ammo_y = 200;
         }
@@ -2195,11 +2767,14 @@ static void take_pick(int i) {
             g_grenades++;
         }
     } else if (p->kind == PK_KEY) {
-        g_has_key = 1;
-        banner("KEYCARD", 50);
+        if (g_has_key < 6) {
+            g_has_key++;
+        }
+        g_map[ri(g_rx, g_ry)].keyed = 1;
+        banner(g_has_key > 1 ? tr("CHIAVI", "KEYCARDS") : tr("CHIAVE", "KEYCARD"), 50);
     } else if (p->kind == PK_DATA) {
         grant_data(p->val > 0 ? p->val : 1);
-        banner("TACTICAL DATA", 40);
+        banner(tr("DATI TATTICI", "TACTICAL DATA"), 40);
     } else if (p->kind == PK_WSC) {
         bit = 2;
         wep = W_SCATTER;
@@ -2223,7 +2798,7 @@ static void take_pick(int i) {
         if (g_ammo_y > 200) {
             g_ammo_y = 200;
         }
-        banner(WEP_NAME[wep], 50);
+        banner(wep_name(wep), 50);
         flush_disk();
     }
     p->on = 0;
@@ -2328,38 +2903,52 @@ static void think_enemy(Enemy *e, int index) {
         } else if (e->hp * 2 < e->maxhp) {
             phase = 1;
         }
-        if (phase == 0 || g_deck == 0) {
+        if (phase == 0 || g_deck < 16) {
             int d;
+            int step = 2 + g_deck / 22;
             for (d = 0; d < 8; d++) {
-                spawn_shot(e->x, e->y, DX[d] * 3, DY[d] * 3, 34, 12, 1, SK_LASER, 0);
+                spawn_shot(e->x, e->y, DX[d] * step, DY[d] * step, 34, 8 + g_deck / 5, 1, SK_LASER, 0);
             }
         }
-        if (phase >= 1) {
-            enemy_bullet(e->x, e->y, g_px, g_py, 3, 12, 0);
-            enemy_bullet(e->x - 12, e->y, g_px, g_py, 3, 12, 0);
+        if (phase >= 1 && g_deck >= 16) {
+            int shot = 8 + g_deck / 5;
+            enemy_bullet(e->x, e->y, g_px, g_py, 3, shot, 0);
+            if (g_deck >= 30) {
+                enemy_bullet(e->x - 12, e->y, g_px, g_py, 3, shot, 0);
+            }
         }
-        if (phase == 2) {
+        if (phase == 0 && g_deck >= 32) {
+            enemy_bullet(e->x, e->y, g_px, g_py, 3, 8 + g_deck / 5, 0);
+        }
+        if (phase >= (g_deck >= 36 ? 1 : 2) && g_deck >= 24) {
             int n = 0;
             int i;
             int d0 = g_spiral & 7;
+            int cap = 1 + (g_deck >= 28) + (g_deck >= 40);
             for (i = 0; i < 6; i++) {
                 int d = (d0 + i) & 7;
-                spawn_shot(e->x, e->y, DX[d] * 2, DY[d] * 2, 40, 12, 1, SK_ORB, 1);
+                spawn_shot(e->x, e->y, DX[d] * 2, DY[d] * 2, 40, 8 + g_deck / 5, 1, SK_ORB, 1);
             }
             g_spiral++;
             for (i = 0; i < MAX_EN; i++) {
-                if (g_enemy[i].on && g_enemy[i].kind == EK_DROID) {
+                if (g_enemy[i].on && g_enemy[i].kind != EK_BOSS) {
                     n++;
                 }
             }
-            if (n < 2) {
+            if (phase == 2 && n < cap) {
                 int sx, sy;
                 if (pick_cell(&sx, &sy)) {
-                    spawn_enemy(EK_DROID, sx, sy);
+                    spawn_enemy(g_deck >= 38 ? EK_ELITE : EK_DROID, sx, sy);
                 }
             }
         }
-        e->cd = phase == 2 ? 34 : 42;
+        e->cd = 48 - g_deck / 4;
+        if (phase == 2) {
+            e->cd -= 6;
+        }
+        if (e->cd < 22) {
+            e->cd = 22;
+        }
         return;
     }
     if (e->kind == EK_DROID) {
@@ -2384,8 +2973,8 @@ static void think_enemy(Enemy *e, int index) {
         if (e->cd > 0) {
             e->cd--;
         } else if (!flee && d2 < 120 * 120 && d2 > 20 * 20 && los(e->x, e->y, g_px, g_py)) {
-            enemy_bullet(e->x, e->y, g_px, g_py, 3, 10, 0);
-            e->cd = 46;
+            enemy_bullet(e->x, e->y, g_px, g_py, 3, 8 + g_deck / 10, 0);
+            e->cd = 50 - g_deck / 10;
         }
         return;
     }
@@ -2414,7 +3003,7 @@ static void think_enemy(Enemy *e, int index) {
             e->cd--;
         }
         if (e->burst > 0 && e->cd <= 0 && los(e->x, e->y, g_px, g_py)) {
-            enemy_bullet(e->x, e->y, g_px, g_py, 4, 10, 0);
+            enemy_bullet(e->x, e->y, g_px, g_py, 4, 8 + g_deck / 8, 0);
             e->burst--;
             e->cd = e->burst ? 6 : 50;
         } else if (e->burst <= 0 && e->cd <= 0 && d2 < 140 * 140 && los(e->x, e->y, g_px, g_py)) {
@@ -2451,7 +3040,7 @@ static void think_enemy(Enemy *e, int index) {
         }
         for (a = -2; a <= 2; a++) {
             int d = (base + a) & 7;
-            spawn_shot(e->x, e->y, DX[d] * 2, DY[d] * 2, 46, 14, 1, SK_ORB, 1);
+            spawn_shot(e->x, e->y, DX[d] * 2, DY[d] * 2, 46, 12 + g_deck / 8, 1, SK_ORB, 1);
         }
         e->cd = 56;
     }
@@ -2478,7 +3067,7 @@ static void sim_shots(void) {
             s->on = 0;
             continue;
         }
-        if (solid_at(s->x, s->y)) {
+        if (solid_at(s->x, s->y) || crate_at_point(s->x, s->y)) {
             if (s->kind == SK_NADE) {
                 queue_boom(s->x, s->y, s->dmg);
             }
@@ -2596,6 +3185,136 @@ static void sim_crush(void) {
     }
 }
 
+static int crate_busy(int x, int y, int self) {
+    int i;
+    for (i = 0; i < MAX_CRATE; i++) {
+        if (i == self || !g_crate[i].on) {
+            continue;
+        }
+        if (iabs(g_crate[i].x - x) < 14 && iabs(g_crate[i].y - y) < 14) {
+            return 1;
+        }
+    }
+    for (i = 0; i < MAX_BAR; i++) {
+        if (g_bar[i].on && iabs(g_bar[i].x - x) < 14 && iabs(g_bar[i].y - y) < 14) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void push_crates(int sx, int sy) {
+    int i;
+    int px = g_px + sx;
+    int py = g_py + sy;
+    if (!sx && !sy) {
+        return;
+    }
+    for (i = 0; i < MAX_CRATE; i++) {
+        Crate *c = &g_crate[i];
+        int nx, ny;
+        if (!c->on) {
+            continue;
+        }
+        if (iabs(c->x - px) >= 12 || iabs(c->y - py) >= 13) {
+            continue;
+        }
+        nx = c->x;
+        ny = c->y;
+        if (sx && (!sy || iabs(c->x - g_px) >= iabs(c->y - g_py))) {
+            nx += sx;
+        } else {
+            ny += sy;
+        }
+        if (box_hit(nx, ny, 7, 7) || crate_busy(nx, ny, i)) {
+            continue;
+        }
+        if (g_map[ri(g_rx, g_ry)].trick && iabs(nx - c->gx) <= 8 && iabs(ny - c->gy) <= 8) {
+            nx = c->gx;
+            ny = c->gy;
+        }
+        c->x = nx;
+        c->y = ny;
+        if (c->secret && (iabs(c->x - c->hx) > 12 || iabs(c->y - c->hy) > 12)) {
+            c->secret = 0;
+            g_map[ri(g_rx, g_ry)].keyed = 1;
+            spawn_pick(c->hx, c->hy, PK_MED, 35);
+            banner(tr("SEGRETO", "SECRET"), 50);
+        }
+    }
+}
+
+static void grant_trick(int kind) {
+    if (kind == 3) {
+        g_ward = 60 * 1000 / FRAME;
+        banner(tr("INVUL 60", "WARD 60"), 70);
+    } else if (kind == 2) {
+        int tier = zone_tier();
+        int bit = tier == 0 ? 2 : (tier == 1 ? 4 : 8);
+        int wep = tier == 0 ? W_SCATTER : (tier == 1 ? W_RAIL : W_MINI);
+        if (g_held & bit) {
+            if (tier == 0) {
+                g_ammo_s += 24;
+            } else {
+                g_ammo_y += tier == 2 ? 12 : 24;
+            }
+            banner(tr("MUNIZIONI", "AMMO"), 40);
+        } else {
+            g_held |= bit;
+            g_unlocks |= bit;
+            g_weapon = wep;
+            if (tier == 0) {
+                g_ammo_s += 16;
+            } else {
+                g_ammo_y += tier == 2 ? 20 : 36;
+            }
+            banner(wep_name(wep), 50);
+            flush_disk();
+        }
+        cap_ammo_fields();
+    } else {
+        int kit = g_deck >= 24 ? 70 : (g_deck >= 8 ? 35 : 15);
+        g_hp += kit;
+        if (g_hp > hp_max()) {
+            g_hp = hp_max();
+        }
+        banner(kit >= 70 ? tr("PACCO SALUTE", "MED PACK") : tr("KIT", "MEDKIT"), 40);
+    }
+    sfx(SFX_PICK);
+}
+
+static void check_align(void) {
+    Room *r;
+    int g, i;
+    if (g_ncrate < 3) {
+        return;
+    }
+    r = &g_map[ri(g_rx, g_ry)];
+    if (!r->trick || r->keyed) {
+        return;
+    }
+    for (g = 0; g < 3; g++) {
+        int ok = 0;
+        for (i = 0; i < 3; i++) {
+            if (!g_crate[i].on) {
+                return;
+            }
+            if (iabs(g_crate[i].x - g_crate[g].gx) <= 8 && iabs(g_crate[i].y - g_crate[g].gy) <= 8) {
+                ok = 1;
+            }
+        }
+        if (!ok) {
+            return;
+        }
+    }
+    for (i = 0; i < 3; i++) {
+        g_crate[i].on = 0;
+    }
+    g_ncrate = 0;
+    r->keyed = 1;
+    grant_trick(r->trick);
+}
+
 static void sim_world(const lippus_pad_t *pad) {
     int hx = pad_held(pad, LIPPUS_RIGHT) - pad_held(pad, LIPPUS_LEFT);
     int hy = pad_held(pad, LIPPUS_DOWN) - pad_held(pad, LIPPUS_UP);
@@ -2617,7 +3336,9 @@ static void sim_world(const lippus_pad_t *pad) {
     }
     g_moving = hx || hy;
     if (g_moving) {
+        push_crates(hx * step, hy * step);
         try_move(&g_px, &g_py, hx * step, hy * step, 5, 6);
+        check_align();
     }
     door = stood_door();
     if (door >= 0) {
@@ -2672,6 +3393,12 @@ static void sim_world(const lippus_pad_t *pad) {
     if (g_iframes > 0) {
         g_iframes--;
     }
+    if (g_ward > 0) {
+        g_ward--;
+        if (g_ward == 0) {
+            banner(tr("INVUL FINITA", "WARD DOWN"), 30);
+        }
+    }
     if (g_combat > 0) {
         g_combat--;
     } else if (g_sp < 50 && (g_tick % 12) == 0) {
@@ -2725,7 +3452,7 @@ static void sim_world(const lippus_pad_t *pad) {
     if (g_boss_down) {
         g_boss_down = 0;
         g_map[ri(g_rx, g_ry)].cleared = 1;
-        g_state = g_deck >= 2 ? ST_WIN : ST_DECK;
+        g_state = g_deck >= g_zones - 1 ? ST_WIN : ST_DECK;
         g_wait = 28;
         g_tick++;
         return;
@@ -2778,6 +3505,7 @@ static int capture_save(int slot) {
     s->heat = (uint8_t)g_heat;
     s->key_used = (uint8_t)g_key_used;
     s->held = (uint8_t)g_held;
+    s->ward = (uint16_t)(g_ward > 65535 ? 65535 : g_ward);
     s->px = (uint16_t)g_px;
     s->py = (uint16_t)g_py;
     s->seed = g_seed;
@@ -2787,6 +3515,18 @@ static int capture_save(int slot) {
         bit_set(s->visited, i, g_map[i].visited);
         bit_set(s->cleared, i, g_map[i].cleared);
         bit_set(s->looted, i, g_map[i].looted);
+        bit_set(s->keyed, i, g_map[i].keyed);
+    }
+    s->pick_n = 0;
+    for (i = 0; i < 6; i++) {
+        if (!g_pick[i].on || s->pick_n >= 6) {
+            continue;
+        }
+        s->pick_kind[s->pick_n] = (uint8_t)g_pick[i].kind;
+        s->pick_val[s->pick_n] = (uint8_t)(g_pick[i].val < 0 ? 0 : g_pick[i].val);
+        s->pick_x[s->pick_n] = (uint16_t)g_pick[i].x;
+        s->pick_y[s->pick_n] = (uint16_t)g_pick[i].y;
+        s->pick_n++;
     }
     return write_slot(slot);
 }
@@ -2798,7 +3538,7 @@ static void apply_save(int slot) {
         return;
     }
     s = &g_slot[slot];
-    gen_deck(s->seed, s->deck);
+    load_zone(s->deck);
     for (i = 0; i < 64; i++) {
         int d;
         for (d = 0; d < 4; d++) {
@@ -2807,6 +3547,7 @@ static void apply_save(int slot) {
         g_map[i].visited = (uint8_t)bit_get(s->visited, i);
         g_map[i].cleared = (uint8_t)bit_get(s->cleared, i);
         g_map[i].looted = (uint8_t)bit_get(s->looted, i);
+        g_map[i].keyed = (uint8_t)bit_get(s->keyed, i);
     }
     g_rx = s->rx;
     g_ry = s->ry;
@@ -2826,6 +3567,10 @@ static void apply_save(int slot) {
     g_heat = s->heat;
     g_key_used = s->key_used;
     g_held = s->held | 1;
+    g_ward = s->ward;
+    if ((g_held & (1 << g_weapon)) == 0) {
+        g_weapon = W_PISTOL;
+    }
     g_lock = 0;
     g_cd = 0;
     g_iframes = 0;
@@ -2840,6 +3585,12 @@ static void apply_save(int slot) {
         g_py = 112;
     }
     spawn_population();
+    for (i = 0; i < MAX_PICK; i++) {
+        g_pick[i].on = 0;
+    }
+    for (i = 0; i < s->pick_n && i < 6; i++) {
+        spawn_pick(s->pick_x[i], s->pick_y[i], s->pick_kind[i], s->pick_val[i]);
+    }
     if (g_hp > hp_max()) {
         g_hp = hp_max();
     }
@@ -2847,7 +3598,7 @@ static void apply_save(int slot) {
         g_hp = 1;
     }
     g_state = ST_PLAY;
-    banner("LOADED", 40);
+    banner(tr("CARICATO", "LOADED"), 40);
 }
 
 static void open_slots(int mode, int back) {
@@ -2875,12 +3626,6 @@ static void open_slots(int mode, int back) {
 }
 
 static void begin_run(void) {
-    g_salt++;
-    g_seed = sys_ticks() ^ (g_salt * 0x9E3779B9u);
-    if (!g_seed) {
-        g_seed = 1;
-    }
-    g_deck = 0;
     g_hp = hp_max();
     g_sp = 50;
     g_heat = 0;
@@ -2897,19 +3642,19 @@ static void begin_run(void) {
     g_cd = 0;
     g_melee_cd = 0;
     g_iframes = 0;
+    g_ward = 0;
     g_combat = 0;
     g_slow = 0;
     g_boss_down = 0;
     g_edge = 0;
-    gen_deck(g_seed, 0);
+    load_zone(0);
     enter_at(g_start_x, g_start_y, -1, 0);
     g_state = ST_PLAY;
-    banner(DECK_NAME[0], 70);
+    banner(zone_name(0), 70);
 }
 
 static void next_deck(void) {
-    g_deck++;
-    if (g_deck > 2) {
+    if (g_deck + 1 >= g_zones) {
         g_state = ST_WIN;
         return;
     }
@@ -2922,15 +3667,10 @@ static void next_deck(void) {
     g_sp = 50;
     g_heat = 0;
     g_lock = 0;
-    g_salt++;
-    g_seed = sys_ticks() ^ (g_salt * 0x9E3779B9u);
-    if (!g_seed) {
-        g_seed = 1;
-    }
-    gen_deck(g_seed, g_deck);
+    load_zone(g_deck + 1);
     enter_at(g_start_x, g_start_y, -1, 0);
     g_state = ST_PLAY;
-    banner(DECK_NAME[g_deck], 80);
+    banner(zone_name(g_deck), 80);
 }
 
 static void draw_flames(void) {
@@ -2981,6 +3721,9 @@ static void draw_player(void) {
         flip = g_face == 4;
     }
     blit(g_px - 8, g_py - 8, sp, 16, 16, flip, 0);
+    if (g_ward > 0) {
+        gfx_rect(g_px - 9 + g_sox, g_py - 9 + g_soy, 18, 18, C(COL_BATTERY_GOLD));
+    }
     if (g_slash > 0) {
         const uint8_t *sl = &SPR_THERMAL_SLASH_E[0][0];
         int fx = 0;
@@ -3037,6 +3780,27 @@ static void draw_enemy(const Enemy *e) {
     blit(e->x - 8, e->y - 8, sp, 16, 16, flipx, flipy);
     if (e->kind == EK_ELITE && e->shield) {
         gfx_fill_rect(e->x - 6 + g_sox, e->y - 10 + g_soy, 12, 2, C(COL_ION_CYAN));
+    }
+}
+
+static void draw_medkit(int x, int y, int val) {
+    int side = 10;
+    int marks = 1;
+    int i;
+    if (val <= 0) {
+        side = 22;
+        marks = 4;
+    } else if (val >= 70) {
+        side = 18;
+        marks = 3;
+    } else if (val >= 35) {
+        side = 14;
+        marks = 2;
+    }
+    blit_scaled(x - side / 2, y - side / 2, &SPR_DROP_MEDKIT[0][0], 16, 16, side, side);
+    for (i = 0; i < marks; i++) {
+        int px = x - marks * 2 + i * 4;
+        gfx_fill_rect(px + g_sox, y + side / 2 + 1 + g_soy, 2, 2, C(COL_NEON_LIME));
     }
 }
 
@@ -3164,6 +3928,11 @@ static void draw_world(void) {
             blit(g_bar[i].x - 8, g_bar[i].y - 8, &SPR_BARREL_PLASMA[0][0], 16, 16, 0, 0);
         }
     }
+    for (i = 0; i < MAX_CRATE; i++) {
+        if (g_crate[i].on) {
+            tile_at(g_crate[i].x - 8, g_crate[i].y - 8, TID_CRATE_COVER);
+        }
+    }
     for (i = 0; i < g_ncrush; i++) {
         if (g_crush[i].on) {
             blit(g_crush[i].x - 8, g_crush[i].y - 8, &SPR_HAZARD_CRUSHER[0][0], 16, 16, 0, 0);
@@ -3171,7 +3940,11 @@ static void draw_world(void) {
     }
     for (i = 0; i < MAX_PICK; i++) {
         if (g_pick[i].on) {
-            blit(g_pick[i].x - 8, g_pick[i].y - 8, pick_sprite(g_pick[i].kind), 16, 16, 0, 0);
+            if (g_pick[i].kind == PK_MED) {
+                draw_medkit(g_pick[i].x, g_pick[i].y, g_pick[i].val);
+            } else {
+                blit(g_pick[i].x - 8, g_pick[i].y - 8, pick_sprite(g_pick[i].kind), 16, 16, 0, 0);
+            }
         }
     }
     for (i = 0; i < MAX_EN; i++) {
@@ -3258,8 +4031,20 @@ static void draw_hud(void) {
             gfx_fill_rect(216 + i * 10, 232, 4, 4, C(COL_HULL_DARK));
         }
     }
-    if (g_has_key) {
-        blit(258, 230, &ICON_HUD_KEYCARD_8[0][0], 8, 8, 0, 0);
+    if (g_ward > 0) {
+        int sec = (g_ward * FRAME + 999) / 1000;
+        fmt_u(num, (unsigned)sec);
+        text(236, 16, tr("INV", "WARD"), COL_BATTERY_GOLD, 1);
+        text(276, 16, num, COL_BATTERY_GOLD, 1);
+    }
+    if (g_has_key > 0) {
+        char num[4];
+        blit(248, 230, &ICON_HUD_KEYCARD_8[0][0], 8, 8, 0, 0);
+        if (g_has_key > 1) {
+            num[0] = (char)('0' + (g_has_key > 9 ? 9 : g_has_key));
+            num[1] = 0;
+            text(258, 228, num, COL_LASER_RED, 1);
+        }
     }
     draw_map(300, 224, 2);
 }
@@ -3311,13 +4096,13 @@ static void draw_vol_hint(void) {
 
 static void title_foot(void) {
     char num[8];
-    text(-1, 176, "PRESS START", COL_NEON_LIME, 1);
-    text(-1, 188, "SELECT UPGRADES", COL_BATTERY_GOLD, 1);
+    text(-1, 176, tr("PREMI START", "PRESS START"), COL_NEON_LIME, 1);
+    text(-1, 188, tr("SELECT POTENZIA", "SELECT UPGRADES"), COL_BATTERY_GOLD, 1);
     fmt_u(num, (unsigned)g_data);
-    text(40, 206, "DATA", COL_TITANIUM_LIGHT, 1);
+    text(40, 206, tr("DATI", "DATA"), COL_TITANIUM_LIGHT, 1);
     text(80, 206, num, COL_NEON_LIME, 1);
     if (any_save()) {
-        text(168, 206, "X LOAD", COL_ION_CYAN, 1);
+        text(168, 206, tr("X CARICA", "X LOAD"), COL_ION_CYAN, 1);
     }
 }
 
@@ -3333,56 +4118,65 @@ static void draw_title(void) {
     title_bg();
     panel(28, 8, 264, 224);
     if (g_page == 1) {
-        text(-1, 16, "GUNS ON THE FLOOR", COL_ION_CYAN, 1);
-        text(-1, 28, "KEYCARD ROOM, ONE PER DECK", COL_TITANIUM_LIGHT, 1);
-        loot_row(46, &ICON_WEP_SCATTERGUN[0][0], "SCATTER", "HANGAR", COL_PLASMA_ORANGE);
-        loot_row(70, &ICON_WEP_RAILGUN[0][0], "RAIL", "REACTOR", COL_ION_CYAN);
-        loot_row(94, &ICON_WEP_MINIGUN[0][0], "MINIGUN", "BRIDGE", COL_BATTERY_GOLD);
-        loot_row(126, &ICON_WEP_PISTOL[0][0], "PISTOL", "ALREADY WITH YOU", COL_CHROME_WHITE);
+        text(-1, 16, tr("ARMI A TERRA", "GUNS ON THE FLOOR"), COL_ION_CYAN, 1);
+        text(-1, 28, tr("SALA CHIAVE, UNA A ZONA", "KEYCARD ROOM, ONE PER ZONE"), COL_TITANIUM_LIGHT, 1);
+        loot_row(46, &ICON_WEP_SCATTERGUN[0][0], "SCATTER", tr("STIVA", "HOLD"), COL_PLASMA_ORANGE);
+        loot_row(70, &ICON_WEP_RAILGUN[0][0], "RAIL", tr("MOTORI", "DRIVE"), COL_ION_CYAN);
+        loot_row(94, &ICON_WEP_MINIGUN[0][0], tr("MITRA", "MINIGUN"), tr("ARMERIA", "ARMORY"), COL_BATTERY_GOLD);
+        loot_row(126, &ICON_WEP_PISTOL[0][0], tr("PISTOLA", "PISTOL"), tr("GIA' CON TE", "ALREADY WITH YOU"),
+                 COL_CHROME_WHITE);
         title_foot();
     } else if (g_page == 2) {
-        text(-1, 16, "MEDKIT", COL_NEON_LIME, 1);
-        loot_row(30, &SPR_DROP_MEDKIT[0][0], "MEDKIT", "RESTORES HP", COL_NEON_LIME);
-        loot_row(54, &SPR_DROP_SHIELD_CELL[0][0], "SHIELD CELL", "RESTORES SHIELD", COL_ION_CYAN);
-        text(-1, 76, "AMMO", COL_BATTERY_GOLD, 1);
-        loot_row(90, &SPR_DROP_FUSION_CELL[0][0], "FUSION CELL", "SCATTER", COL_PLASMA_ORANGE);
-        loot_row(112, &SPR_DROP_YELLOW_BATTERY[0][0], "YELLOW CELL", "RAIL AND MINIGUN", COL_BATTERY_GOLD);
-        loot_row(134, &SPR_DROP_RED_CORE[0][0], "RED CORE", "GRENADES", COL_LASER_RED);
+        text(-1, 16, tr("KIT SALUTE", "MEDKITS"), COL_NEON_LIME, 1);
+        loot_row(30, &SPR_DROP_MEDKIT[0][0], tr("DAL CEROTTO AL PIENO", "PATCH TO FULL"),
+                 tr("15  35  70  TUTTA", "15  35  70  ALL HP"), COL_NEON_LIME);
+        loot_row(54, &SPR_DROP_SHIELD_CELL[0][0], tr("CELLA SCUDO", "SHIELD CELL"),
+                 tr("RICARICA LO SCUDO", "RESTORES SHIELD"), COL_ION_CYAN);
+        text(-1, 76, tr("MUNIZIONI", "AMMO"), COL_BATTERY_GOLD, 1);
+        loot_row(90, &SPR_DROP_FUSION_CELL[0][0], tr("CELLA FUSION", "FUSION CELL"), "SCATTER", COL_PLASMA_ORANGE);
+        loot_row(112, &SPR_DROP_YELLOW_BATTERY[0][0], tr("CELLA GIALLA", "YELLOW CELL"),
+                 tr("RAIL E MITRA", "RAIL AND MINIGUN"), COL_BATTERY_GOLD);
+        loot_row(134, &SPR_DROP_RED_CORE[0][0], tr("NUCLEO ROSSO", "RED CORE"), tr("GRANATE", "GRENADES"),
+                 COL_LASER_RED);
         title_foot();
     } else {
         text(-1, 20, "INCURSORE", COL_ION_CYAN, 2);
-        text(-1, 56, "VS HEGEMONY", COL_PLASMA_VIOLET, 1);
+        text(-1, 56, tr("VS EGEMONIA", "VS HEGEMONY"), COL_PLASMA_VIOLET, 1);
         if (g_page == 3) {
-            text(-1, 80, "STICK MOVE AND AIM", COL_CHROME_WHITE, 1);
-            text(-1, 96, "A FIRE    B STRAFE", COL_CHROME_WHITE, 1);
-            text(-1, 112, "X DOOR OR VENT", COL_CHROME_WHITE, 1);
-            text(-1, 128, "Y GRENADE", COL_CHROME_WHITE, 1);
-            text(-1, 144, "CLICK BLADE", COL_CHROME_WHITE, 1);
+            text(-1, 80, tr("LEVA MUOVE E MIRA", "STICK MOVE AND AIM"), COL_CHROME_WHITE, 1);
+            text(-1, 96, tr("A SPARA    B STRAFE", "A FIRE    B STRAFE"), COL_CHROME_WHITE, 1);
+            text(-1, 112, tr("X PORTA O SFIATO", "X DOOR OR VENT"), COL_CHROME_WHITE, 1);
+            text(-1, 128, tr("Y GRANATA", "Y GRENADE"), COL_CHROME_WHITE, 1);
+            text(-1, 144, tr("CLICK LAMA", "CLICK BLADE"), COL_CHROME_WHITE, 1);
         } else if (g_page == 4) {
-            text(-1, 80, "SELECT SWAPS GUNS", COL_CHROME_WHITE, 1);
-            text(-1, 96, "HOLD SELECT FOR GEAR", COL_CHROME_WHITE, 1);
-            text(-1, 120, "DEATH RESETS THE RUN", COL_LASER_RED, 1);
-            text(-1, 136, "DATA STAYS WITH YOU", COL_NEON_LIME, 1);
+            text(-1, 80, tr("SELECT CAMBIA ARMA", "SELECT SWAPS GUNS"), COL_CHROME_WHITE, 1);
+            text(-1, 96, tr("TIENI SELECT: ZAINO", "HOLD SELECT FOR GEAR"), COL_CHROME_WHITE, 1);
+            text(-1, 120, tr("LA MORTE AZZERA LA RUN", "DEATH RESETS THE RUN"), COL_LASER_RED, 1);
+            text(-1, 136, tr("I DATI RESTANO", "DATA STAYS WITH YOU"), COL_NEON_LIME, 1);
         } else {
-            text(-1, 84, "STICK FLIPS THESE SLIDES", COL_CHROME_WHITE, 1);
-            text(-1, 108, "GUNS, MEDKIT, AMMO", COL_BATTERY_GOLD, 1);
+            text(-1, 84, tr("LE FRECCE CAMBIANO PAGINA", "STICK FLIPS THESE SLIDES"), COL_CHROME_WHITE, 1);
+            text(-1, 108, tr("ARMI, KIT, MUNIZIONI", "GUNS, MEDKIT, AMMO"), COL_BATTERY_GOLD, 1);
             fmt_u(num, (unsigned)g_data);
-            text(96, 132, "DATA", COL_TITANIUM_LIGHT, 1);
+            text(96, 132, tr("DATI", "DATA"), COL_TITANIUM_LIGHT, 1);
             text(136, 132, num, COL_NEON_LIME, 1);
         }
-        text(-1, 176, "PRESS START", COL_NEON_LIME, 1);
-        text(-1, 192, "SELECT UPGRADES", COL_BATTERY_GOLD, 1);
+        text(-1, 176, tr("PREMI START", "PRESS START"), COL_NEON_LIME, 1);
+        text(-1, 192, tr("SELECT POTENZIA", "SELECT UPGRADES"), COL_BATTERY_GOLD, 1);
         if (any_save()) {
-            text(-1, 208, "X LOAD", COL_ION_CYAN, 1);
+            text(-1, 208, tr("X CARICA", "X LOAD"), COL_ION_CYAN, 1);
         }
     }
     draw_vol_hint();
+    text(-1, 220, tr("CLICK LINGUA", "CLICK LANGUAGE"), COL_ION_CYAN, 1);
 }
 
 static void draw_upgrade(void) {
     char num[8];
     int i;
-    static const char *const name[3] = {"HULL +10 HP", "COOLANT", "RED DOT"};
+    const char *name0 = tr("SCAFO +10 PS", "HULL +10 HP");
+    const char *name1 = tr("RAFFREDDAMENTO", "COOLANT");
+    const char *name2 = tr("MIRINO ROSSO", "RED DOT");
+    const char *name[3];
     int rank[3];
     int maxr[3];
     rank[0] = g_hp_rank;
@@ -3391,9 +4185,12 @@ static void draw_upgrade(void) {
     maxr[0] = 3;
     maxr[1] = 2;
     maxr[2] = 2;
+    name[0] = name0;
+    name[1] = name1;
+    name[2] = name2;
     draw_title();
     panel(28, 16, 264, 200);
-    text(-1, 26, "TACTICAL DATA", COL_ION_CYAN, 1);
+    text(-1, 26, tr("DATI TATTICI", "TACTICAL DATA"), COL_ION_CYAN, 1);
     fmt_u(num, (unsigned)g_data);
     text(-1, 40, num, COL_NEON_LIME, 1);
     for (i = 0; i < 3; i++) {
@@ -3414,9 +4211,9 @@ static void draw_upgrade(void) {
         fmt_u(num, (unsigned)maxr[i]);
         text(240, y, num, COL_STEEL_MID, 1);
     }
-    text(-1, 160, "COST 3    A BUY", COL_VENOM_GREEN, 1);
-    text(-1, 178, "B BACK", COL_TITANIUM_LIGHT, 1);
-    text(-1, 196, "GUNS STAY IN THE POOL", COL_STEEL_MID, 1);
+    text(-1, 160, tr("COSTO 3    A COMPRA", "COST 3    A BUY"), COL_VENOM_GREEN, 1);
+    text(-1, 178, tr("B INDIETRO", "B BACK"), COL_TITANIUM_LIGHT, 1);
+    text(-1, 196, tr("LE ARMI RESTANO", "GUNS STAY IN THE POOL"), COL_STEEL_MID, 1);
 }
 
 static void draw_pause(void) {
@@ -3424,10 +4221,10 @@ static void draw_pause(void) {
     draw_world();
     draw_hud();
     panel(80, 48, 160, 128);
-    text(-1, 58, "SYSTEM", COL_ION_CYAN, 1);
+    text(-1, 58, tr("SISTEMA", "SYSTEM"), COL_ION_CYAN, 1);
     for (i = 0; i < 4; i++) {
         text(112, 78 + i * 16, i == g_menu ? ">" : " ", COL_SPARK_YELLOW, 1);
-        text(128, 78 + i * 16, PAUSE_ITEM[i], i == g_menu ? COL_CHROME_WHITE : COL_TITANIUM_LIGHT, 1);
+        text(128, 78 + i * 16, pause_item(i), i == g_menu ? COL_CHROME_WHITE : COL_TITANIUM_LIGHT, 1);
     }
 }
 
@@ -3440,7 +4237,7 @@ static void draw_slots(void) {
         title_bg();
     }
     panel(16, 8, 288, 208);
-    text(-1, 16, g_slot_mode ? "LOAD SLOT" : "SAVE SLOT", COL_ION_CYAN, 1);
+    text(-1, 16, g_slot_mode ? tr("CARICA SLOT", "LOAD SLOT") : tr("SALVA SLOT", "SAVE SLOT"), COL_ION_CYAN, 1);
     for (i = 0; i < SAVE_SLOTS; i++) {
         char num[8];
         int y = 36 + i * 18;
@@ -3451,25 +4248,25 @@ static void draw_slots(void) {
         num[1] = 0;
         text(44, y, num, col, 1);
         if (!g_slot_ok[i]) {
-            text(62, y, "EMPTY", on ? COL_STEEL_MID : COL_STEEL_SHADOW, 1);
+            text(62, y, tr("VUOTO", "EMPTY"), on ? COL_STEEL_MID : COL_STEEL_SHADOW, 1);
             continue;
         }
-        text(62, y, DECK_NAME[g_slot[i].deck > 2 ? 2 : g_slot[i].deck], col, 1);
+        text(62, y, zone_name(g_slot[i].deck), col, 1);
         fmt_u(num, g_slot[i].rx);
         text(148, y, num, col, 1);
         text(166, y, ",", COL_STEEL_MID, 1);
         fmt_u(num, g_slot[i].ry);
         text(174, y, num, col, 1);
-        text(206, y, "HP", COL_STEEL_MID, 1);
+        text(206, y, tr("PS", "HP"), COL_STEEL_MID, 1);
         fmt_u(num, g_slot[i].hp);
         text(228, y, num, COL_NEON_LIME, 1);
     }
     if (g_confirm) {
-        text(-1, 188, "OVERWRITE?  A YES  B NO", COL_LASER_RED, 1);
+        text(-1, 188, tr("SOVRASCRIVI? A SI  B NO", "OVERWRITE?  A YES  B NO"), COL_LASER_RED, 1);
     } else if (g_slot_mode) {
-        text(-1, 188, "A LOAD    B BACK", COL_TITANIUM_LIGHT, 1);
+        text(-1, 188, tr("A CARICA   B INDIETRO", "A LOAD    B BACK"), COL_TITANIUM_LIGHT, 1);
     } else {
-        text(-1, 188, "A SAVE    B BACK", COL_TITANIUM_LIGHT, 1);
+        text(-1, 188, tr("A SALVA    B INDIETRO", "A SAVE    B BACK"), COL_TITANIUM_LIGHT, 1);
     }
 }
 
@@ -3479,10 +4276,10 @@ static void draw_inv(void) {
     draw_world();
     draw_hud();
     panel(16, 16, 200, 190);
-    text(28, 24, "GEAR", COL_ION_CYAN, 1);
+    text(28, 24, tr("ZAINO", "GEAR"), COL_ION_CYAN, 1);
     for (i = 0; i < 4; i++) {
         int have = (g_held & (1 << i)) != 0;
-        text(28, 42 + i * 16, WEP_NAME[i], have ? COL_CHROME_WHITE : COL_STEEL_SHADOW, 1);
+        text(28, 42 + i * 16, wep_name(i), have ? COL_CHROME_WHITE : COL_STEEL_SHADOW, 1);
         if (i == W_PISTOL) {
             text(120, 42, "INF", COL_VENOM_GREEN, 1);
         } else if (have) {
@@ -3490,17 +4287,18 @@ static void draw_inv(void) {
             text(120, 42 + i * 16, num, COL_BATTERY_GOLD, 1);
         }
     }
-    text(28, 112, "GRENADES", COL_CHROME_WHITE, 1);
+    text(28, 112, tr("GRANATE", "GRENADES"), COL_CHROME_WHITE, 1);
     fmt_u(num, (unsigned)g_grenades);
     text(120, 112, num, COL_PLASMA_VIOLET, 1);
-    text(28, 128, "KEYCARD", COL_CHROME_WHITE, 1);
-    text(120, 128, g_has_key ? "YES" : "NO", g_has_key ? COL_LASER_RED : COL_STEEL_MID, 1);
-    text(28, 144, "DATA", COL_CHROME_WHITE, 1);
+    text(28, 128, tr("CHIAVI", "KEYCARDS"), COL_CHROME_WHITE, 1);
+    fmt_u(num, (unsigned)g_has_key);
+    text(120, 128, num, g_has_key ? COL_LASER_RED : COL_STEEL_MID, 1);
+    text(28, 144, tr("DATI", "DATA"), COL_CHROME_WHITE, 1);
     fmt_u(num, (unsigned)g_data);
     text(120, 144, num, COL_NEON_LIME, 1);
-    text(28, 168, "B CLOSE", COL_TITANIUM_LIGHT, 1);
+    text(28, 168, tr("B CHIUDI", "B CLOSE"), COL_TITANIUM_LIGHT, 1);
     draw_map(230, 36, 8);
-    text(230, 110, DECK_NAME[g_deck > 2 ? 2 : g_deck], COL_ION_CYAN, 1);
+    text(230, 110, zone_name(g_deck), COL_ION_CYAN, 1);
 }
 
 static void draw_end(const char *a, const char *b, const char *c) {
@@ -3525,6 +4323,233 @@ static void buy_upgrade(void) {
     sfx(SFX_VENT);
 }
 
+static const char *const CRAWL_IT[] = {
+    "NELL'ORLO ESTERNO DELLA GALASSIA,",
+    "SOTTO IL GIOGO DELL'EGEMONIA...",
+    "",
+    "INCURSORE vs EGEMONIA",
+    "",
+    "EPISODIO I",
+    "L'ASSALTO ALL'INCROCIATORE",
+    "",
+    "",
+    "Sono tempi bui per i mondi liberi.",
+    "La flotta dell'EGEMONIA ha chiuso",
+    "ogni rotta commerciale con la sua",
+    "ammiraglia corazzata, una fortezza",
+    "spaziale ritenuta inespugnabile.",
+    "",
+    "A bordo di una capsula furtiva,",
+    "un solitario INCURSORE ha appena",
+    "forzato i portelli della STIVA",
+    "INFERIORE per colpire il nemico",
+    "dal suo interno.",
+    "",
+    "La missione e' disperata:",
+    "risalire tutti i QUINDICI PONTI",
+    "della nave, dalla Stiva fino",
+    "alla PLANCIA DI COMANDO SUPREMA,",
+    "e distruggere il Nucleo Centrale.",
+    "",
+    "Per sopravvivere alle difese",
+    "dell'Egemonia dovrai padroneggiare",
+    "ogni risorsa a bordo:",
+    "",
+    "- LE CHIAVI COLORATE: recupera le",
+    "  Keycard Ciano, Gialla, Rossa e",
+    "  Viola per aprire le paratie",
+    "  blindate che sbarrano i ponti.",
+    "",
+    "- ENIGMI E COPERTURE: spingi le",
+    "  casse cargo per proteggerti dal",
+    "  fuoco nemico o per tenere attive",
+    "  le pedane a pressione nascoste.",
+    "",
+    "- ESPLOSIONI E SEGRETI: fai",
+    "  saltare in aria i barili al",
+    "  plasma o usa le granate per",
+    "  abbattere i muri crepati.",
+    "",
+    "Dietro le pareti segrete si",
+    "celano armi sperimentali,",
+    "potenziamenti vitali e gli",
+    "ASCENSORI DI SERVIZIO OCCULTI,",
+    "scorciatoie capaci di farti",
+    "saltare interi ponti verso la",
+    "vetta dell'incrociatore.",
+    "",
+    "Impugna la pistola a impulsi,",
+    "affila la lama termica e",
+    "prepara l'irruzione.",
+    "",
+    "Il destino del settore e' nelle",
+    "tue mani, Incursore....",
+    0,
+};
+
+static const char *const CRAWL_EN[] = {
+    "ON THE OUTER RIM OF THE GALAXY,",
+    "UNDER THE YOKE OF THE HEGEMONY...",
+    "",
+    "INCURSOR VS HEGEMONY",
+    "",
+    "EPISODE I",
+    "ASSAULT ON THE CRUISER",
+    "",
+    "",
+    "Dark times for the free worlds.",
+    "The HEGEMONY fleet has closed",
+    "every trade route with its",
+    "armored flagship, a fortress",
+    "thought to be impregnable.",
+    "",
+    "Aboard a stealth pod,",
+    "a lone INCURSOR has just",
+    "forced the LOWER HOLD hatches",
+    "to strike the enemy",
+    "from the inside.",
+    "",
+    "The mission is desperate:",
+    "climb all FIFTEEN DECKS,",
+    "from the Hold up to the",
+    "SUPREME COMMAND BRIDGE,",
+    "and destroy the Central Core.",
+    "",
+    "To survive the defenses",
+    "of the Hegemony you must",
+    "master every resource aboard:",
+    "",
+    "- COLORED KEYS: recover the",
+    "  Cyan, Yellow, Red and",
+    "  Violet keycards to open",
+    "  the sealed deck bulkheads.",
+    "",
+    "- PUZZLES AND COVER: push",
+    "  cargo crates to block",
+    "  enemy fire, or to hold",
+    "  hidden pressure plates.",
+    "",
+    "- BLASTS AND SECRETS: blow",
+    "  the plasma barrels, or use",
+    "  grenades to break open",
+    "  the cracked walls.",
+    "",
+    "Behind the secret walls",
+    "lie experimental weapons,",
+    "vital upgrades and the",
+    "HIDDEN SERVICE LIFTS,",
+    "shortcuts that skip whole",
+    "decks on the way up",
+    "the cruiser.",
+    "",
+    "Draw the pulse pistol,",
+    "hone the thermal blade",
+    "and prepare the breach.",
+    "",
+    "The fate of the sector is",
+    "in your hands, Incursor....",
+    0,
+};
+
+static void draw_stars(void) {
+    uint32_t n = 0x1A2B3C4Du;
+    int i;
+    for (i = 0; i < 56; i++) {
+        int x, y;
+        n = n * 1664525u + 1013904223u;
+        x = (int)((n >> 16) % 320u);
+        n = n * 1664525u + 1013904223u;
+        y = (int)((n >> 16) % 232u);
+        if (((g_frame + i * 3) & 31) < 6) {
+            continue;
+        }
+        gfx_fill_rect(x, y, 1, 1, C(((i + g_frame) & 8) ? COL_CHROME_WHITE : COL_STEEL_MID));
+    }
+}
+
+static void open_crawl(void) {
+    g_state = ST_CRAWL;
+    g_crawl = 0;
+    g_wait = 0;
+    g_sox = 0;
+    g_soy = 0;
+}
+
+static int crawl_skip(const lippus_pad_t *pad) {
+    return (pad->pressed & (LIPPUS_A | LIPPUS_B | LIPPUS_X | LIPPUS_Y | LIPPUS_CLICK | LIPPUS_START |
+                            LIPPUS_SELECT)) != 0;
+}
+
+static void draw_crawl(void) {
+    const char *const *lines = g_lang ? CRAWL_EN : CRAWL_IT;
+    int i;
+    int last = 0;
+    g_sox = 0;
+    g_soy = 0;
+    gfx_clear(C(COL_VOID_BLACK));
+    draw_stars();
+    for (i = 0; lines[i]; i++) {
+        int y = 248 - g_crawl + i * 12;
+        int col = COL_BATTERY_GOLD;
+        last = i;
+        if (i < 2) {
+            col = COL_ION_CYAN;
+        } else if (i == 3 || i == 5 || i == 6) {
+            col = COL_SPARK_YELLOW;
+        }
+        if (y > -10 && y < 230 && lines[i][0]) {
+            text(-1, y, lines[i], col, 1);
+        }
+    }
+    if (248 - g_crawl + last * 12 < -16) {
+        g_wait = -1;
+    }
+}
+
+static void tick_crawl(const lippus_pad_t *pad) {
+    if (crawl_skip(pad)) {
+        begin_run();
+        return;
+    }
+    if (g_wait > 0) {
+        g_wait--;
+    } else if (g_wait < 0) {
+        begin_run();
+        return;
+    } else {
+        g_crawl++;
+    }
+    draw_crawl();
+}
+
+static void draw_lang(void) {
+    title_bg();
+    panel(48, 56, 224, 128);
+    text(-1, 68, tr("LINGUA", "LANGUAGE"), COL_ION_CYAN, 1);
+    text(78, 96, g_menu == 0 ? ">" : " ", COL_SPARK_YELLOW, 1);
+    text(96, 96, "ITALIANO", g_menu == 0 ? COL_CHROME_WHITE : COL_TITANIUM_LIGHT, 1);
+    text(78, 116, g_menu == 1 ? ">" : " ", COL_SPARK_YELLOW, 1);
+    text(96, 116, "ENGLISH", g_menu == 1 ? COL_CHROME_WHITE : COL_TITANIUM_LIGHT, 1);
+    text(-1, 152, tr("A SCEGLI   B INDIETRO", "A CHOOSE   B BACK"), COL_TITANIUM_LIGHT, 1);
+}
+
+static void tick_lang(const lippus_pad_t *pad) {
+    if (pad_pressed(pad, LIPPUS_UP) || pad_pressed(pad, LIPPUS_DOWN)) {
+        g_menu = g_menu ? 0 : 1;
+    }
+    if (pad_pressed(pad, LIPPUS_A) || pad_pressed(pad, LIPPUS_START)) {
+        g_lang = g_menu ? 1 : 0;
+        flush_disk();
+        g_state = ST_TITLE;
+        return;
+    }
+    if (pad_pressed(pad, LIPPUS_B)) {
+        g_state = ST_TITLE;
+        return;
+    }
+    draw_lang();
+}
+
 static void tick_title(const lippus_pad_t *pad) {
     if ((g_frame % 180) == 0) {
         g_page = (g_page + 1) % TITLE_PAGES;
@@ -3541,8 +4566,13 @@ static void tick_title(const lippus_pad_t *pad) {
     if (pad_pressed(pad, LIPPUS_B)) {
         bgm_nudge(-1);
     }
+    if (pad_pressed(pad, LIPPUS_CLICK)) {
+        g_menu = g_lang ? 1 : 0;
+        g_state = ST_LANG;
+        return;
+    }
     if (pad_pressed(pad, LIPPUS_START) || pad_pressed(pad, LIPPUS_A)) {
-        begin_run();
+        open_crawl();
         return;
     }
     if (pad_pressed(pad, LIPPUS_SELECT)) {
@@ -3664,10 +4694,10 @@ static void tick_slot(const lippus_pad_t *pad) {
     if (g_confirm) {
         if (pad_pressed(pad, LIPPUS_A) || pad_pressed(pad, LIPPUS_START)) {
             if (capture_save(g_menu)) {
-                banner("SAVED", 40);
+                banner(tr("SALVATO", "SAVED"), 40);
                 sfx(SFX_PICK);
             } else {
-                banner("FAILED", 40);
+                banner(tr("ERRORE", "FAILED"), 40);
                 sfx(SFX_LOCK);
             }
             g_confirm = 0;
@@ -3704,10 +4734,10 @@ static void tick_slot(const lippus_pad_t *pad) {
         } else if (g_slot_ok[g_menu]) {
             g_confirm = 1;
         } else if (capture_save(g_menu)) {
-            banner("SAVED", 40);
+            banner(tr("SALVATO", "SAVED"), 40);
             sfx(SFX_PICK);
         } else {
-            banner("FAILED", 40);
+            banner(tr("ERRORE", "FAILED"), 40);
             sfx(SFX_LOCK);
         }
     }
@@ -3733,7 +4763,8 @@ static void tick_dead(const lippus_pad_t *pad) {
         g_state = ST_TITLE;
         return;
     }
-    draw_end("SYSTEM FAILURE", "DATA KEPT", "A RETRY   B TITLE");
+    draw_end(tr("SISTEMA KO", "SYSTEM FAILURE"), tr("DATI CONSERVATI", "DATA KEPT"),
+             tr("A RIPROVA   B TITOLO", "A RETRY   B TITLE"));
 }
 
 static void tick_deck(const lippus_pad_t *pad) {
@@ -3743,7 +4774,7 @@ static void tick_deck(const lippus_pad_t *pad) {
         next_deck();
         return;
     }
-    draw_end(DECK_NAME[g_deck], "DECK CLEAR", "A NEXT DECK");
+    draw_end(zone_name(g_deck), tr("ZONA LIBERA", "ZONE CLEAR"), tr("A PROSSIMA ZONA", "A NEXT ZONE"));
 }
 
 static void tick_win(const lippus_pad_t *pad) {
@@ -3753,10 +4784,12 @@ static void tick_win(const lippus_pad_t *pad) {
         g_state = ST_TITLE;
         return;
     }
-    draw_end("HEGEMONY FALLS", "THE SHIP IS YOURS", "A TITLE");
+    draw_end(tr("EGEMONIA CADUTA", "HEGEMONY FALLS"), tr("LA NAVE E' TUA", "THE SHIP IS YOURS"),
+             tr("A TITOLO", "A TITLE"));
 }
 
 void lippus_main(void) {
+    campaign_init();
     load_disk();
     bake_tiles();
     g_state = ST_TITLE;
@@ -3782,6 +4815,10 @@ void lippus_main(void) {
             tick_deck(&pad);
         } else if (g_state == ST_SLOT) {
             tick_slot(&pad);
+        } else if (g_state == ST_CRAWL) {
+            tick_crawl(&pad);
+        } else if (g_state == ST_LANG) {
+            tick_lang(&pad);
         } else {
             tick_win(&pad);
         }

@@ -1,0 +1,1200 @@
+# Incursor campaign format 1
+# Un solo file per tutta la campagna. Un generatore esterno
+# puo' riscriverlo: l'ordine dei blocchi e' l'ordine di gioco.
+# Le righe che iniziano con # e le righe vuote si ignorano.
+#
+# format 1
+# zones N                 quante zone seguono, da 1 a 64
+#
+# Ogni zona e' un blocco fra una riga "zone" e una riga "end".
+# deck e area sono etichette. Il gioco segue l'ordine dei blocchi.
+# name                    fino a 9 caratteri, quello che si legge a schermo
+# seed                    numero intero, fissa i nemici di ogni stanza
+# start X Y               prima stanza, griglia 0..7
+# room X Y kind tmpl dist NESW
+#
+# kind: combat start key boss loot
+# tmpl: 0..7, uno degli otto disegni di stanza del gioco
+# dist: passi dalla partenza, 0 nella stanza iniziale
+# NESW, nord est sud ovest, un carattere ciascuno:
+#   . nessuna porta
+#   c porta chiusa
+#   l porta chiusa a chiave
+#   o porta aperta
+# La porta va scritta uguale dall'altro lato.
+# Servono una stanza start, una key e una boss.
+# Al massimo 18 stanze per zona, al massimo 64 zone.
+
+format 1
+zones 45
+
+zone
+deck 1
+area 1
+name HOLD 1
+seed 2768240641
+start 2 5
+room 6 1 key 7 12 .cc.
+room 7 1 loot 0 11 ..cc
+room 4 2 boss 6 15 .l..
+room 5 2 combat 0 14 .c.l
+room 6 2 combat 1 13 c..c
+room 7 2 combat 1 10 c.c.
+room 7 3 combat 0 9 c.c.
+room 4 4 combat 0 5 .cc.
+room 5 4 combat 0 6 .c.c
+room 6 4 combat 1 7 .c.c
+room 7 4 combat 1 8 c..c
+room 2 5 start 0 0 ..c.
+room 3 5 combat 0 3 .cc.
+room 4 5 combat 0 4 c..c
+room 2 6 combat 0 1 ccc.
+room 3 6 combat 1 2 c.cc
+room 2 7 combat 0 2 cc..
+room 3 7 combat 1 3 c..c
+end
+
+zone
+deck 1
+area 2
+name HOLD 2
+seed 2768306178
+start 2 5
+room 2 5 start 0 0 .c..
+room 3 5 key 7 1 .ccc
+room 4 5 loot 0 2 ..cc
+room 6 5 combat 1 6 .cc.
+room 7 5 combat 0 7 ..cc
+room 2 6 combat 0 3 .cc.
+room 3 6 combat 1 2 c.cc
+room 4 6 combat 0 3 ccc.
+room 5 6 combat 1 4 .ccc
+room 6 6 combat 1 5 c..c
+room 7 6 combat 1 8 c.c.
+room 1 7 boss 6 5 .l..
+room 2 7 combat 1 4 c..l
+room 3 7 combat 1 3 cc..
+room 4 7 combat 1 4 cc.c
+room 5 7 combat 0 5 cc.c
+room 6 7 combat 0 6 .c.c
+room 7 7 combat 0 7 c..c
+end
+
+zone
+deck 1
+area 3
+name HOLD 3
+seed 2768371715
+start 2 5
+room 1 5 key 7 1 .cc.
+room 2 5 start 0 0 ...c
+room 7 5 boss 6 11 ..l.
+room 0 6 loot 0 3 .cc.
+room 1 6 combat 1 2 cccc
+room 2 6 combat 1 3 .ccc
+room 3 6 combat 0 4 ..cc
+room 4 6 combat 0 7 .cc.
+room 5 6 combat 0 8 .c.c
+room 6 6 combat 0 9 .ccc
+room 7 6 combat 1 10 l.cc
+room 0 7 combat 1 4 cc..
+room 1 7 combat 1 3 cc.c
+room 2 7 combat 0 4 c..c
+room 3 7 combat 1 5 cc..
+room 4 7 combat 0 6 c..c
+room 6 7 combat 0 10 cc..
+room 7 7 combat 1 11 c..c
+end
+
+zone
+deck 2
+area 1
+name CARGO 1
+seed 2768437252
+start 2 5
+room 2 3 boss 6 6 ..l.
+room 3 3 loot 0 5 .cc.
+room 4 3 combat 0 6 ..cc
+room 2 4 combat 1 5 lc..
+room 3 4 combat 0 4 c.cc
+room 4 4 combat 1 7 cc..
+room 5 4 combat 1 6 .ccc
+room 6 4 combat 1 7 ..cc
+room 2 5 start 0 0 ..c.
+room 3 5 key 7 3 c.c.
+room 4 5 combat 0 4 .cc.
+room 5 5 combat 0 5 cc.c
+room 6 5 combat 0 6 c..c
+room 2 6 combat 1 1 cc..
+room 3 6 combat 1 2 cccc
+room 4 6 combat 0 3 c.cc
+room 3 7 combat 1 3 cc..
+room 4 7 combat 1 4 c..c
+end
+
+zone
+deck 2
+area 2
+name CARGO 2
+seed 2768502789
+start 2 5
+room 1 3 key 7 3 .cc.
+room 2 3 loot 0 2 .ccc
+room 3 3 combat 0 3 .ccc
+room 4 3 combat 1 4 .l.c
+room 5 3 boss 6 5 ...l
+room 1 4 combat 0 4 c.c.
+room 2 4 combat 1 1 ccc.
+room 3 4 combat 1 2 c..c
+room 1 5 combat 1 5 c.c.
+room 2 5 start 0 0 c.c.
+room 0 6 combat 1 7 .cc.
+room 1 6 combat 0 6 c.cc
+room 2 6 combat 1 1 cc..
+room 3 6 combat 1 2 ..cc
+room 0 7 combat 0 6 cc..
+room 1 7 combat 0 5 cc.c
+room 2 7 combat 0 4 .c.c
+room 3 7 combat 0 3 c..c
+end
+
+zone
+deck 2
+area 3
+name CARGO 3
+seed 2768568326
+start 2 5
+room 4 3 key 7 6 .cc.
+room 5 3 loot 0 7 .c.c
+room 6 3 combat 0 8 ..cc
+room 4 4 combat 0 5 c.c.
+room 5 4 combat 1 6 .cc.
+room 6 4 combat 0 7 c..c
+room 2 5 start 0 0 .c..
+room 3 5 combat 0 1 ..cc
+room 4 5 combat 0 4 ccc.
+room 5 5 combat 1 5 c.cc
+room 3 6 combat 0 2 cc..
+room 4 6 combat 0 3 cc.c
+room 5 6 combat 1 4 cc.c
+room 6 6 combat 1 5 .ccc
+room 7 6 combat 1 6 ..cc
+room 5 7 boss 6 7 .l..
+room 6 7 combat 1 6 cc.l
+room 7 7 combat 1 7 c..c
+end
+
+zone
+deck 3
+area 1
+name HANGAR 1
+seed 2768633863
+start 2 5
+room 3 2 key 7 4 .lc.
+room 4 2 boss 6 5 ...l
+room 2 3 loot 0 2 .cc.
+room 3 3 combat 0 3 c..c
+room 1 4 combat 1 2 .cc.
+room 2 4 combat 0 1 c.cc
+room 0 5 combat 1 4 .cc.
+room 1 5 combat 0 3 c..c
+room 2 5 start 0 0 ccc.
+room 3 5 combat 0 1 .c.c
+room 4 5 combat 0 2 ..cc
+room 0 6 combat 1 5 c.c.
+room 1 6 combat 1 2 .cc.
+room 2 6 combat 1 1 cc.c
+room 3 6 combat 1 2 .c.c
+room 4 6 combat 0 3 c..c
+room 0 7 combat 0 4 cc..
+room 1 7 combat 0 3 c..c
+end
+
+zone
+deck 3
+area 2
+name HANGAR 2
+seed 2768699400
+start 2 5
+room 1 5 loot 0 1 .cc.
+room 2 5 start 0 0 ...c
+room 3 5 combat 0 9 .cc.
+room 4 5 combat 0 10 .c.c
+room 5 5 combat 0 11 ..cc
+room 6 5 boss 6 12 ..l.
+room 0 6 combat 1 3 .cc.
+room 1 6 combat 0 2 c..c
+room 2 6 key 7 7 .cc.
+room 3 6 combat 0 8 cc.c
+room 4 6 combat 0 9 .ccc
+room 5 6 combat 1 10 cc.c
+room 6 6 combat 0 11 l..c
+room 0 7 combat 0 4 cc..
+room 1 7 combat 1 5 .c.c
+room 2 7 combat 0 6 cc.c
+room 3 7 combat 0 7 .c.c
+room 4 7 combat 1 8 c..c
+end
+
+zone
+deck 3
+area 3
+name HANGAR 3
+seed 2768764937
+start 2 5
+room 5 4 key 7 4 .cc.
+room 6 4 loot 0 5 ..cc
+room 2 5 start 0 0 .c..
+room 3 5 combat 1 1 .c.c
+room 4 5 combat 0 2 .c.c
+room 5 5 combat 1 3 cc.c
+room 6 5 combat 0 4 cc.c
+room 7 5 combat 1 5 ..cc
+room 1 6 combat 0 14 .lc.
+room 2 6 boss 6 15 ...l
+room 3 6 combat 1 10 .cc.
+room 4 6 combat 1 9 .c.c
+room 5 6 combat 1 8 .c.c
+room 6 6 combat 0 7 .c.c
+room 7 6 combat 1 6 c..c
+room 1 7 combat 0 13 cc..
+room 2 7 combat 1 12 .c.c
+room 3 7 combat 1 11 c..c
+end
+
+zone
+deck 4
+area 1
+name THRUST 1
+seed 2768830474
+start 2 5
+room 0 0 key 7 9 .c..
+room 1 0 loot 0 8 .ccc
+room 2 0 combat 1 9 .c.c
+room 3 0 combat 1 10 ..cc
+room 0 1 combat 0 6 .cc.
+room 1 1 combat 1 7 c..c
+room 3 1 combat 0 11 c.c.
+room 0 2 combat 0 5 cc..
+room 1 2 combat 1 4 ..cc
+room 3 2 combat 0 12 cc..
+room 4 2 combat 0 13 .l.c
+room 5 2 boss 6 14 ...l
+room 1 3 combat 1 3 ccc.
+room 2 3 combat 1 4 ..cc
+room 1 4 combat 1 2 ccc.
+room 2 4 combat 0 3 c..c
+room 1 5 combat 0 1 cc..
+room 2 5 start 0 0 ...c
+end
+
+zone
+deck 4
+area 2
+name THRUST 2
+seed 2768896011
+start 2 5
+room 1 1 loot 0 5 .cc.
+room 2 1 combat 1 4 .ccc
+room 3 1 combat 0 5 ..lc
+room 1 2 combat 0 4 cc..
+room 2 2 combat 1 3 c.cc
+room 3 2 boss 6 6 l...
+room 2 3 combat 1 2 c.c.
+room 0 4 combat 1 3 .cc.
+room 1 4 combat 0 2 .ccc
+room 2 4 combat 0 1 c.cc
+room 0 5 combat 0 4 c.c.
+room 1 5 key 7 3 c...
+room 2 5 start 0 0 cc..
+room 3 5 combat 0 1 ..cc
+room 0 6 combat 0 5 cc..
+room 1 6 combat 1 4 .c.c
+room 2 6 combat 0 3 .c.c
+room 3 6 combat 0 2 c..c
+end
+
+zone
+deck 4
+area 3
+name THRUST 3
+seed 2768961548
+start 2 5
+room 1 0 key 7 10 .cc.
+room 2 0 loot 0 9 .c.c
+room 3 0 combat 1 8 ..cc
+room 0 1 combat 1 12 .cc.
+room 1 1 combat 1 11 c.cc
+room 3 1 combat 0 7 c.c.
+room 0 2 combat 1 13 cc..
+room 1 2 combat 0 12 cl.c
+room 2 2 boss 6 13 ...l
+room 3 2 combat 1 6 c.c.
+room 3 3 combat 0 5 cc..
+room 4 3 combat 0 4 .ccc
+room 5 3 combat 1 5 ..cc
+room 3 4 combat 0 2 .cc.
+room 4 4 combat 0 3 cc.c
+room 5 4 combat 0 4 c..c
+room 2 5 start 0 0 .c..
+room 3 5 combat 0 1 c..c
+end
+
+zone
+deck 5
+area 1
+name ENGINE 1
+seed 2769027085
+start 2 5
+room 0 5 combat 0 2 .cc.
+room 1 5 combat 0 1 .ccc
+room 2 5 start 0 0 ...c
+room 4 5 combat 1 8 .cc.
+room 5 5 combat 1 9 .c.c
+room 6 5 combat 0 10 ..cc
+room 0 6 combat 0 3 cc..
+room 1 6 combat 0 2 cccc
+room 2 6 combat 1 3 .c.c
+room 3 6 combat 0 4 ..cc
+room 4 6 combat 0 7 c.c.
+room 6 6 combat 0 11 c.l.
+room 0 7 key 7 4 .c..
+room 1 7 loot 0 3 cc.c
+room 2 7 combat 0 4 .c.c
+room 3 7 combat 1 5 cc.c
+room 4 7 combat 0 6 c..c
+room 6 7 boss 6 12 l...
+end
+
+zone
+deck 5
+area 2
+name ENGINE 2
+seed 2769092622
+start 2 5
+room 2 3 key 7 8 .cc.
+room 3 3 loot 0 9 ..cc
+room 1 4 combat 0 6 .cc.
+room 2 4 combat 0 7 c..c
+room 3 4 combat 1 10 c.c.
+room 0 5 combat 1 4 .cc.
+room 1 5 combat 0 5 c..c
+room 2 5 start 0 0 ..c.
+room 3 5 combat 0 11 c.c.
+room 0 6 combat 1 3 cc..
+room 1 6 combat 1 2 .c.c
+room 2 6 combat 0 1 c..c
+room 3 6 combat 0 12 cc..
+room 4 6 combat 0 13 ..cc
+room 4 7 combat 1 14 cc..
+room 5 7 combat 1 15 .c.c
+room 6 7 combat 1 16 .l.c
+room 7 7 boss 6 17 ...l
+end
+
+zone
+deck 5
+area 3
+name ENGINE 3
+seed 2769158159
+start 2 5
+room 1 4 key 7 2 .cc.
+room 2 4 loot 0 3 .c.c
+room 3 4 combat 0 4 .c.c
+room 4 4 combat 1 5 .ccc
+room 5 4 combat 0 6 ..cc
+room 1 5 combat 0 1 cc..
+room 2 5 start 0 0 ..cc
+room 3 5 combat 1 3 .cc.
+room 4 5 combat 0 4 cc.c
+room 5 5 combat 1 5 c..c
+room 2 6 combat 0 1 ccc.
+room 3 6 combat 0 2 c.cc
+room 2 7 combat 0 2 cc..
+room 3 7 combat 1 3 cc.c
+room 4 7 combat 1 4 .c.c
+room 5 7 combat 0 5 .c.c
+room 6 7 combat 1 6 .l.c
+room 7 7 boss 6 7 ...l
+end
+
+zone
+deck 6
+area 1
+name DRIVE 1
+seed 2769223696
+start 2 5
+room 5 3 key 7 9 .cc.
+room 6 3 loot 0 10 .c.c
+room 7 3 combat 2 9 ..cc
+room 5 4 combat 1 8 cc..
+room 6 4 combat 1 7 ..cc
+room 7 4 combat 3 8 c.c.
+room 2 5 start 0 0 .c..
+room 3 5 combat 4 1 .c.c
+room 4 5 combat 1 2 ..cc
+room 6 5 combat 3 6 ccc.
+room 7 5 combat 2 7 c.cc
+room 4 6 combat 1 3 cc..
+room 5 6 combat 1 4 .c.c
+room 6 6 combat 2 5 c..c
+room 7 6 combat 2 8 c.c.
+room 5 7 boss 6 11 .l..
+room 6 7 combat 1 10 .c.l
+room 7 7 combat 2 9 c..c
+end
+
+zone
+deck 6
+area 2
+name DRIVE 2
+seed 2769289233
+start 2 5
+room 6 0 key 7 15 .cc.
+room 7 0 loot 0 16 ..lc
+room 6 1 combat 2 14 c.c.
+room 7 1 boss 6 17 l...
+room 5 2 combat 4 12 .cc.
+room 6 2 combat 3 13 c..c
+room 3 3 combat 3 7 .cc.
+room 4 3 combat 1 8 ..cc
+room 5 3 combat 3 11 c.c.
+room 0 4 combat 1 3 .cc.
+room 1 4 combat 3 4 .c.c
+room 2 4 combat 4 5 .c.c
+room 3 4 combat 2 6 c..c
+room 4 4 combat 2 9 cc..
+room 5 4 combat 4 10 c..c
+room 0 5 combat 2 2 cc..
+room 1 5 combat 3 1 .c.c
+room 2 5 start 0 0 ...c
+end
+
+zone
+deck 6
+area 3
+name DRIVE 3
+seed 2769354770
+start 2 5
+room 2 4 boss 6 11 .l..
+room 3 4 key 7 10 ..cl
+room 4 4 loot 0 9 .cc.
+room 5 4 combat 3 8 ..cc
+room 1 5 combat 4 1 .cc.
+room 2 5 start 0 0 ..cc
+room 3 5 combat 1 9 cc..
+room 4 5 combat 4 8 cc.c
+room 5 5 combat 1 7 c.cc
+room 1 6 combat 1 2 c.c.
+room 2 6 combat 3 1 ccc.
+room 3 6 combat 4 2 ..cc
+room 5 6 combat 3 6 c.c.
+room 1 7 combat 3 3 cc..
+room 2 7 combat 2 2 c..c
+room 3 7 combat 1 3 cc..
+room 4 7 combat 3 4 .c.c
+room 5 7 combat 1 5 c..c
+end
+
+zone
+deck 7
+area 1
+name LAB 1
+seed 2769420307
+start 2 5
+room 0 2 combat 1 11 .cc.
+room 1 2 combat 1 12 ..cc
+room 0 3 combat 2 10 c.c.
+room 1 3 combat 1 13 c.c.
+room 0 4 combat 2 9 c.c.
+room 1 4 combat 3 14 cl..
+room 2 4 boss 6 15 ...l
+room 0 5 combat 1 8 ccc.
+room 1 5 combat 3 7 ..cc
+room 2 5 start 0 0 .c..
+room 3 5 combat 1 1 ..cc
+room 0 6 loot 0 9 c.c.
+room 1 6 combat 1 6 c.c.
+room 2 6 combat 2 3 .cc.
+room 3 6 combat 1 2 c..c
+room 0 7 key 7 10 c...
+room 1 7 combat 4 5 cc..
+room 2 7 combat 2 4 c..c
+end
+
+zone
+deck 7
+area 2
+name LAB 2
+seed 2769485844
+start 2 5
+room 2 2 loot 0 5 .cc.
+room 3 2 combat 1 6 ..cc
+room 1 3 combat 3 3 .cc.
+room 2 3 combat 1 4 cc.c
+room 3 3 combat 3 5 c.cc
+room 1 4 combat 2 2 c.c.
+room 2 4 key 7 7 .c..
+room 3 4 combat 2 6 c.cc
+room 1 5 combat 2 1 ccc.
+room 2 5 start 0 0 ..cc
+room 3 5 combat 3 7 cc..
+room 4 5 combat 1 8 ..cc
+room 1 6 combat 2 2 cc..
+room 2 6 combat 4 1 c..c
+room 4 6 combat 1 9 cc..
+room 5 6 combat 1 10 .c.c
+room 6 6 combat 4 11 .l.c
+room 7 6 boss 6 12 ...l
+end
+
+zone
+deck 7
+area 3
+name LAB 3
+seed 2769551381
+start 2 5
+room 1 3 loot 0 9 .cc.
+room 2 3 combat 1 10 .ccc
+room 3 3 combat 3 11 ..cc
+room 1 4 combat 3 8 c.c.
+room 2 4 key 7 11 cc..
+room 3 4 combat 2 12 cc.c
+room 4 4 combat 3 13 ..cc
+room 0 5 combat 1 6 .cc.
+room 1 5 combat 3 7 c..c
+room 2 5 start 0 0 ..c.
+room 4 5 combat 3 14 cc..
+room 5 5 combat 3 15 .l.c
+room 6 5 boss 6 16 ...l
+room 0 6 combat 4 5 c.c.
+room 1 6 combat 2 2 .cc.
+room 2 6 combat 1 1 c..c
+room 0 7 combat 1 4 cc..
+room 1 7 combat 3 3 c..c
+end
+
+zone
+deck 8
+area 1
+name MEDBAY 1
+seed 2769616918
+start 2 5
+room 7 2 boss 6 16 ..l.
+room 7 3 loot 0 15 l.c.
+room 6 4 combat 2 13 .cc.
+room 7 4 combat 4 14 c..c
+room 2 5 start 0 0 .c..
+room 3 5 combat 1 1 ..cc
+room 6 5 combat 4 12 cc..
+room 7 5 combat 4 11 ..cc
+room 3 6 combat 4 2 c.c.
+room 4 6 combat 4 5 .cc.
+room 5 6 combat 3 6 .c.c
+room 6 6 combat 1 7 ..cc
+room 7 6 combat 1 10 c.c.
+room 3 7 combat 4 3 cc..
+room 4 7 combat 2 4 c..c
+room 5 7 key 7 9 .c..
+room 6 7 combat 1 8 cc.c
+room 7 7 combat 1 9 c..c
+end
+
+zone
+deck 8
+area 2
+name MEDBAY 2
+seed 2769682455
+start 2 5
+room 0 2 key 7 15 .cc.
+room 1 2 loot 0 16 .l.c
+room 2 2 boss 6 17 ...l
+room 0 3 combat 2 14 c.c.
+room 0 4 combat 2 13 c.c.
+room 1 4 combat 4 2 .cc.
+room 2 4 combat 2 3 .c.c
+room 3 4 combat 1 4 ..cc
+room 0 5 combat 2 12 c.c.
+room 1 5 combat 2 1 cc..
+room 2 5 start 0 0 ...c
+room 3 5 combat 1 5 c.c.
+room 0 6 combat 3 11 cc..
+room 1 6 combat 1 10 ..cc
+room 3 6 combat 3 6 c.c.
+room 1 7 combat 3 9 cc..
+room 2 7 combat 3 8 .c.c
+room 3 7 combat 2 7 c..c
+end
+
+zone
+deck 8
+area 3
+name MEDBAY 3
+seed 2769747992
+start 2 5
+room 2 1 boss 6 16 .l..
+room 3 1 loot 0 15 ..cl
+room 3 2 combat 3 14 cc..
+room 4 2 combat 1 13 ..cc
+room 4 3 combat 4 12 c.c.
+room 3 4 combat 4 10 .cc.
+room 4 4 combat 2 11 c..c
+room 2 5 start 0 0 ..c.
+room 3 5 combat 2 9 cc..
+room 4 5 combat 3 8 .ccc
+room 5 5 combat 3 7 ..cc
+room 2 6 combat 4 1 cc..
+room 3 6 combat 4 2 ..cc
+room 4 6 key 7 9 c...
+room 5 6 combat 3 6 c.c.
+room 3 7 combat 2 3 cc..
+room 4 7 combat 1 4 .c.c
+room 5 7 combat 2 5 c..c
+end
+
+zone
+deck 9
+area 1
+name BIOLAB 1
+seed 2769813529
+start 2 5
+room 2 2 boss 6 9 .l..
+room 3 2 key 7 8 .c.l
+room 4 2 loot 0 7 ..cc
+room 4 3 combat 3 6 cc..
+room 5 3 combat 2 5 ..cc
+room 3 4 combat 4 2 .cc.
+room 4 4 combat 3 3 .c.c
+room 5 4 combat 2 4 c..c
+room 1 5 combat 2 1 .cc.
+room 2 5 start 0 0 .c.c
+room 3 5 combat 2 1 c.cc
+room 0 6 combat 3 3 .cc.
+room 1 6 combat 1 2 c..c
+room 2 6 combat 4 3 .cc.
+room 3 6 combat 4 2 c..c
+room 0 7 combat 2 4 cc..
+room 1 7 combat 2 5 .c.c
+room 2 7 combat 1 4 c..c
+end
+
+zone
+deck 9
+area 2
+name BIOLAB 2
+seed 2769879066
+start 2 5
+room 7 3 key 7 9 ..c.
+room 7 4 loot 0 8 c.c.
+room 2 5 start 0 0 .cc.
+room 3 5 combat 3 1 .ccc
+room 4 5 combat 3 2 ..cc
+room 7 5 combat 3 7 c.c.
+room 2 6 combat 1 1 c.c.
+room 3 6 combat 3 2 c.c.
+room 4 6 combat 2 3 cc..
+room 5 6 combat 2 4 .ccc
+room 6 6 combat 3 5 .c.c
+room 7 6 combat 4 6 c.cc
+room 2 7 combat 4 2 cc..
+room 3 7 combat 1 3 c..c
+room 4 7 boss 6 6 .l..
+room 5 7 combat 1 5 cc.l
+room 6 7 combat 1 6 .c.c
+room 7 7 combat 2 7 c..c
+end
+
+zone
+deck 9
+area 3
+name BIOLAB 3
+seed 2769944603
+start 2 5
+room 4 3 combat 3 10 .cc.
+room 5 3 combat 1 11 .c.c
+room 6 3 combat 3 12 .l.c
+room 7 3 boss 6 13 ...l
+room 4 4 combat 2 9 c.c.
+room 0 5 combat 4 2 .cc.
+room 1 5 combat 2 1 .c.c
+room 2 5 start 0 0 ...c
+room 3 5 combat 1 7 .cc.
+room 4 5 combat 4 8 c..c
+room 0 6 combat 3 3 cc..
+room 1 6 combat 1 4 .c.c
+room 2 6 combat 1 5 .ccc
+room 3 6 combat 3 6 c.cc
+room 0 7 key 7 8 .c..
+room 1 7 loot 0 7 .c.c
+room 2 7 combat 1 6 cc.c
+room 3 7 combat 4 7 c..c
+end
+
+zone
+deck 10
+area 1
+name BARRACK 1
+seed 2770010140
+start 2 5
+room 1 0 key 7 6 .cc.
+room 2 0 loot 0 7 .c.c
+room 3 0 combat 4 8 .c.c
+room 4 0 combat 4 9 .c.c
+room 5 0 combat 3 10 ..cc
+room 1 1 combat 1 5 c.c.
+room 5 1 combat 4 11 cc..
+room 6 1 combat 4 12 .c.c
+room 7 1 combat 1 13 ..cc
+room 1 2 combat 2 4 c.c.
+room 7 2 combat 2 14 c.c.
+room 1 3 combat 3 3 c.c.
+room 7 3 combat 4 15 c.c.
+room 1 4 combat 4 2 cc..
+room 2 4 combat 2 1 ..cc
+room 6 4 boss 6 17 .l..
+room 7 4 combat 2 16 c..l
+room 2 5 start 0 0 c...
+end
+
+zone
+deck 10
+area 2
+name BARRACK 2
+seed 2770075677
+start 2 5
+room 4 2 boss 6 11 .l..
+room 5 2 key 7 10 .ccl
+room 6 2 loot 0 11 .c.c
+room 7 2 combat 1 12 ..cc
+room 3 3 combat 4 9 .cc.
+room 4 3 combat 1 8 .ccc
+room 5 3 combat 1 9 cc.c
+room 6 3 combat 4 10 .c.c
+room 7 3 combat 2 11 c..c
+room 3 4 combat 3 8 cc..
+room 4 4 combat 2 7 c.cc
+room 2 5 start 0 0 ..c.
+room 4 5 combat 1 6 c.c.
+room 2 6 combat 1 1 c.c.
+room 4 6 combat 4 5 c.c.
+room 2 7 combat 2 2 cc..
+room 3 7 combat 4 3 .c.c
+room 4 7 combat 4 4 c..c
+end
+
+zone
+deck 10
+area 3
+name BARRACK 3
+seed 2770141214
+start 2 5
+room 0 3 key 7 4 .cc.
+room 1 3 loot 0 3 .c.c
+room 2 3 combat 3 2 ..cc
+room 3 3 boss 6 3 ..l.
+room 0 4 combat 1 3 c.c.
+room 2 4 combat 4 1 c.c.
+room 3 4 combat 3 2 l.c.
+room 0 5 combat 3 2 cc..
+room 1 5 combat 4 1 .ccc
+room 2 5 start 0 0 cc.c
+room 3 5 combat 2 1 c.cc
+room 1 6 combat 4 2 cc..
+room 2 6 combat 4 3 ..cc
+room 3 6 combat 3 2 ccc.
+room 4 6 combat 1 3 ..cc
+room 2 7 combat 1 4 cc..
+room 3 7 combat 1 3 cc.c
+room 4 7 combat 1 4 c..c
+end
+
+zone
+deck 11
+area 1
+name ARMORY 1
+seed 2770206751
+start 2 5
+room 1 2 key 7 4 .cc.
+room 2 2 loot 0 5 ..cc
+room 1 3 combat 3 3 c.c.
+room 2 3 combat 5 6 c.c.
+room 1 4 combat 1 2 c.c.
+room 2 4 combat 3 7 cc..
+room 3 4 combat 3 8 .c.c
+room 4 4 combat 3 9 .c.c
+room 5 4 combat 5 10 ..cc
+room 1 5 combat 5 1 cc..
+room 2 5 start 0 0 ...c
+room 3 5 combat 5 13 .cc.
+room 4 5 combat 5 12 .ccc
+room 5 5 combat 1 11 c.cc
+room 3 6 combat 1 14 c.l.
+room 4 6 combat 3 13 cc..
+room 5 6 combat 5 12 c..c
+room 3 7 boss 6 15 l...
+end
+
+zone
+deck 11
+area 2
+name ARMORY 2
+seed 2770272288
+start 2 5
+room 0 0 key 7 9 .cc.
+room 1 0 loot 0 8 ..cc
+room 2 0 combat 3 7 .cc.
+room 3 0 combat 5 8 .c.c
+room 4 0 combat 5 7 ..cc
+room 0 1 combat 5 10 c.c.
+room 1 1 combat 3 7 cc..
+room 2 1 combat 5 6 cc.c
+room 3 1 combat 1 5 .ccc
+room 4 1 combat 1 6 c..c
+room 0 2 combat 3 11 cc..
+room 1 2 combat 5 12 .l.c
+room 2 2 boss 6 13 ...l
+room 3 2 combat 1 4 c.c.
+room 2 3 combat 5 2 .cc.
+room 3 3 combat 5 3 c..c
+room 2 4 combat 1 1 c.c.
+room 2 5 start 0 0 c...
+end
+
+zone
+deck 11
+area 3
+name ARMORY 3
+seed 2770337825
+start 2 5
+room 3 3 loot 0 3 .cc.
+room 4 3 combat 5 4 ..cc
+room 2 4 combat 5 1 .cc.
+room 3 4 combat 3 2 cccc
+room 4 4 combat 5 3 c.cc
+room 0 5 boss 6 8 ..l.
+room 2 5 start 0 0 c...
+room 3 5 key 7 3 c.c.
+room 4 5 combat 3 4 cc..
+room 5 5 combat 1 5 ..cc
+room 0 6 combat 3 7 lc..
+room 1 6 combat 1 6 .c.c
+room 2 6 combat 1 5 .c.c
+room 3 6 combat 1 4 c.cc
+room 4 6 combat 3 7 .cc.
+room 5 6 combat 3 6 c..c
+room 3 7 combat 1 5 cc..
+room 4 7 combat 5 6 c..c
+end
+
+zone
+deck 12
+area 1
+name BUNKS 1
+seed 2770403362
+start 2 5
+room 4 0 boss 6 9 .l..
+room 5 0 key 7 8 .ccl
+room 6 0 loot 0 9 .ccc
+room 7 0 combat 1 10 ..cc
+room 5 1 combat 3 7 c.c.
+room 6 1 combat 1 8 c.c.
+room 7 1 combat 3 9 c.c.
+room 5 2 combat 5 6 ccc.
+room 6 2 combat 5 7 c.cc
+room 7 2 combat 5 8 c.c.
+room 4 3 combat 5 4 .cc.
+room 5 3 combat 1 5 cc.c
+room 6 3 combat 5 6 cc.c
+room 7 3 combat 5 7 c..c
+room 2 4 combat 5 1 .cc.
+room 3 4 combat 5 2 .c.c
+room 4 4 combat 3 3 c..c
+room 2 5 start 0 0 c...
+end
+
+zone
+deck 12
+area 2
+name BUNKS 2
+seed 2770468899
+start 2 5
+room 0 2 key 7 7 .cc.
+room 1 2 loot 0 8 ..lc
+room 0 3 combat 5 6 c.c.
+room 1 3 boss 6 9 l...
+room 0 4 combat 3 5 c.c.
+room 1 4 combat 3 2 .cc.
+room 2 4 combat 5 1 ..cc
+room 0 5 combat 5 4 ccc.
+room 1 5 combat 3 3 c.cc
+room 2 5 start 0 0 c...
+room 0 6 combat 5 5 c.c.
+room 1 6 combat 5 4 cc..
+room 2 6 combat 5 5 .c.c
+room 3 6 combat 5 6 ..cc
+room 0 7 combat 3 6 cc..
+room 1 7 combat 5 7 .c.c
+room 2 7 combat 5 8 .c.c
+room 3 7 combat 3 7 c..c
+end
+
+zone
+deck 12
+area 3
+name BUNKS 3
+seed 2770534436
+start 2 5
+room 6 2 boss 6 13 ..l.
+room 6 3 key 7 12 lc..
+room 7 3 loot 0 11 ..cc
+room 7 4 combat 1 10 c.c.
+room 2 5 start 0 0 ..c.
+room 7 5 combat 3 9 c.c.
+room 0 6 combat 5 3 .cc.
+room 1 6 combat 1 2 .c.c
+room 2 6 combat 1 1 c.cc
+room 6 6 combat 5 7 .cc.
+room 7 6 combat 3 8 c..c
+room 0 7 combat 1 4 cc..
+room 1 7 combat 5 3 .c.c
+room 2 7 combat 1 2 cc.c
+room 3 7 combat 3 3 .c.c
+room 4 7 combat 3 4 .c.c
+room 5 7 combat 3 5 .c.c
+room 6 7 combat 5 6 c..c
+end
+
+zone
+deck 13
+area 1
+name CORE 1
+seed 2770599973
+start 2 5
+room 4 0 key 7 7 .cc.
+room 5 0 loot 0 8 .c.c
+room 6 0 combat 1 9 ..cc
+room 4 1 combat 1 6 c.c.
+room 6 1 combat 3 8 c.c.
+room 2 2 combat 1 3 .cc.
+room 3 2 combat 1 4 .c.c
+room 4 2 combat 3 5 c..c
+room 5 2 combat 5 6 .cc.
+room 6 2 combat 3 7 c..c
+room 1 3 boss 6 3 .l..
+room 2 3 combat 3 2 c.cl
+room 4 3 combat 3 4 .cc.
+room 5 3 combat 3 5 c..c
+room 2 4 combat 5 1 ccc.
+room 3 4 combat 5 2 .c.c
+room 4 4 combat 1 3 c..c
+room 2 5 start 0 0 c...
+end
+
+zone
+deck 13
+area 2
+name CORE 2
+seed 2770665510
+start 2 5
+room 4 3 loot 0 14 .cc.
+room 5 3 combat 3 15 .l.c
+room 6 3 boss 6 16 ...l
+room 1 4 combat 3 2 .cc.
+room 2 4 combat 5 1 ..cc
+room 4 4 combat 3 13 c.c.
+room 0 5 combat 5 4 .cc.
+room 1 5 combat 1 3 c..c
+room 2 5 start 0 0 c...
+room 4 5 combat 5 12 c.c.
+room 0 6 combat 3 5 ccc.
+room 1 6 combat 3 6 ..cc
+room 3 6 combat 1 10 .cc.
+room 4 6 combat 5 11 c..c
+room 0 7 key 7 6 cc..
+room 1 7 combat 5 7 cc.c
+room 2 7 combat 1 8 .c.c
+room 3 7 combat 5 9 c..c
+end
+
+zone
+deck 13
+area 3
+name CORE 3
+seed 2770731047
+start 2 5
+room 0 0 key 7 13 .cc.
+room 1 0 loot 0 14 .c.c
+room 2 0 combat 3 15 ..cc
+room 0 1 combat 1 12 cc..
+room 1 1 combat 3 11 ..cc
+room 2 1 combat 3 16 cl..
+room 3 1 boss 6 17 ...l
+room 0 2 combat 3 9 .cc.
+room 1 2 combat 3 10 c..c
+room 0 3 combat 1 8 c.c.
+room 0 4 combat 5 7 c.c.
+room 0 5 combat 5 6 c.c.
+room 2 5 start 0 0 ..c.
+room 0 6 combat 1 5 cc..
+room 1 6 combat 5 4 ..cc
+room 2 6 combat 5 1 c.c.
+room 1 7 combat 3 3 cc..
+room 2 7 combat 1 2 c..c
+end
+
+zone
+deck 14
+area 1
+name NEXUS 1
+seed 2770796584
+start 2 5
+room 0 2 boss 6 11 ..l.
+room 3 2 key 7 6 .cc.
+room 4 2 loot 0 5 .ccc
+room 5 2 combat 5 6 ..cc
+room 0 3 combat 5 10 l.c.
+room 1 3 combat 1 7 .cc.
+room 2 3 combat 5 6 .c.c
+room 3 3 combat 3 5 cc.c
+room 4 3 combat 5 4 cccc
+room 5 3 combat 5 5 c..c
+room 0 4 combat 1 9 ccc.
+room 1 4 combat 1 8 c.cc
+room 2 4 combat 5 1 .cc.
+room 3 4 combat 5 2 .c.c
+room 4 4 combat 3 3 c..c
+room 0 5 combat 3 10 cc..
+room 1 5 combat 1 9 c..c
+room 2 5 start 0 0 c...
+end
+
+zone
+deck 14
+area 2
+name NEXUS 2
+seed 2770862121
+start 2 5
+room 0 3 boss 6 6 .l..
+room 1 3 loot 0 5 .c.l
+room 2 3 combat 5 4 .ccc
+room 3 3 combat 5 3 ..cc
+room 0 4 combat 3 3 .cc.
+room 1 4 combat 1 2 ..cc
+room 2 4 key 7 3 cc..
+room 3 4 combat 3 2 c.cc
+room 0 5 combat 3 4 c.c.
+room 1 5 combat 5 1 cc..
+room 2 5 start 0 0 .c.c
+room 3 5 combat 5 1 c.cc
+room 0 6 combat 5 5 c.c.
+room 2 6 combat 1 3 .cc.
+room 3 6 combat 5 2 c..c
+room 0 7 combat 5 6 cc..
+room 1 7 combat 1 5 .c.c
+room 2 7 combat 3 4 c..c
+end
+
+zone
+deck 14
+area 3
+name NEXUS 3
+seed 2770927658
+start 2 5
+room 0 1 key 7 6 .cc.
+room 1 1 loot 0 5 ..cc
+room 0 2 combat 5 5 c.c.
+room 1 2 combat 5 4 c.c.
+room 0 3 combat 1 4 ccc.
+room 1 3 combat 5 3 c.cc
+room 0 4 combat 5 5 c.c.
+room 1 4 combat 5 2 c.c.
+room 0 5 combat 5 6 c.c.
+room 1 5 combat 5 1 cc..
+room 2 5 start 0 0 ...c
+room 0 6 combat 1 7 c.c.
+room 0 7 combat 5 8 cc..
+room 1 7 combat 5 9 .c.c
+room 2 7 combat 1 10 .c.c
+room 3 7 combat 5 11 .c.c
+room 4 7 combat 3 12 .l.c
+room 5 7 boss 6 13 ...l
+end
+
+zone
+deck 15
+area 1
+name BRIDGE 1
+seed 2770993195
+start 2 5
+room 3 2 key 7 8 .cc.
+room 4 2 loot 0 7 .ccc
+room 5 2 combat 5 8 .l.c
+room 6 2 boss 6 9 ...l
+room 3 3 combat 5 7 cc..
+room 4 3 combat 5 6 cc.c
+room 5 3 combat 1 5 ..cc
+room 3 4 combat 1 2 .cc.
+room 4 4 combat 3 3 .c.c
+room 5 4 combat 1 4 c..c
+room 2 5 start 0 0 .cc.
+room 3 5 combat 5 1 c.cc
+room 1 6 combat 5 2 .cc.
+room 2 6 combat 3 1 c..c
+room 3 6 combat 5 2 c.c.
+room 1 7 combat 5 3 cc..
+room 2 7 combat 5 4 .c.c
+room 3 7 combat 5 3 c..c
+end
+
+zone
+deck 15
+area 2
+name BRIDGE 2
+seed 2771058732
+start 2 5
+room 7 1 boss 6 11 ..l.
+room 7 2 key 7 10 l.c.
+room 5 3 loot 0 7 .cc.
+room 6 3 combat 1 8 .ccc
+room 7 3 combat 1 9 c.cc
+room 2 4 combat 1 1 .cc.
+room 3 4 combat 5 2 ..cc
+room 4 4 combat 5 5 .cc.
+room 5 4 combat 5 6 c..c
+room 6 4 combat 1 9 cc..
+room 7 4 combat 5 10 c..c
+room 2 5 start 0 0 c...
+room 3 5 combat 5 3 ccc.
+room 4 5 combat 5 4 cccc
+room 5 5 combat 3 5 ..cc
+room 3 6 combat 5 4 cc..
+room 4 6 combat 5 5 cc.c
+room 5 6 combat 5 6 c..c
+end
+
+zone
+deck 15
+area 3
+name BRIDGE 3
+seed 2771124269
+start 2 5
+room 3 3 key 7 3 .cc.
+room 4 3 loot 0 4 ..cc
+room 2 4 combat 3 1 .cc.
+room 3 4 combat 3 2 cc.c
+room 4 4 combat 5 3 c.cc
+room 2 5 start 0 0 c...
+room 4 5 combat 3 4 c.c.
+room 5 5 combat 3 7 .cc.
+room 6 5 combat 3 8 ..cc
+room 2 6 boss 6 11 .l..
+room 3 6 combat 1 10 ..cl
+room 4 6 combat 1 5 cc..
+room 5 6 combat 3 6 c.cc
+room 6 6 combat 5 9 c.c.
+room 3 7 combat 5 9 cc..
+room 4 7 combat 5 8 .c.c
+room 5 7 combat 5 7 cc.c
+room 6 7 combat 5 8 c..c
+end
+

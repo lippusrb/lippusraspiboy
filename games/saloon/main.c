@@ -388,12 +388,12 @@ static int level_sim(int level) {
     return 3;
 }
 
-/* Finestra per sparare, in frame. Cala di un terzo di secondo a livello.
-   Al 7 resta circa 0.8 s, dall'8 in poi circa mezzo secondo. */
+/* Finestra per sparare, in frame a sys_frame(33). Due secondi al livello 1,
+   un terzo di secondo in meno a ogni livello. Sotto il mezzo secondo non si scende. */
 static int level_aim(int level) {
-    int t = 90 - (level - 1) * 11;
-    if (t < 16) {
-        t = 16;
+    int t = 61 - (level - 1) * 10;
+    if (t < 15) {
+        t = 15;
     }
     return t;
 }
